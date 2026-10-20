@@ -1,5 +1,11 @@
 # Kubemarine settings shared by all clusters. Not a terraform root module (abstract):
 # `atmos kubemarine <procedure> -s <stack>` renders `vars.cluster` into cluster.yaml.
+
+# kubeconfig written by `atmos kubemarine install`; used by helm/helmfile components.
+# Relative to the component dir (components/<type>/<name>), where atmos runs the tools.
+env:
+  KUBECONFIG: ../../../.kubemarine/<% .atmos_stack %>/kubeconfig
+
 components:
   terraform:
     kubemarine:
@@ -17,5 +23,9 @@ components:
             calico:
               mode: vxlan # IPIP is blocked on Azure; VXLAN works everywhere
               crossSubnet: false # always encapsulate: clouds drop raw pod IPs even inside one subnet
+            local-path-provisioner: # default StorageClass `local-path` on node local disks (stateful apps: kafka, ...)
+              install: true
+              storage-class:
+                is-default: "true"
         # procedure.yaml per procedure name (upgrade plan, backup settings, grace_period, ...)
         procedures: {}

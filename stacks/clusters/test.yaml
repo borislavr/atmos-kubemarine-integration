@@ -1,19 +1,17 @@
-# Cluster `test`: Azure provider layer + cluster-specific overrides. Stack name = vars.stage.
+# Cluster `test`, provider-agnostic. Placed into a cloud by providers/<cloud>/test.yaml (stack `test-<cloud>`).
 import:
-  - providers/azure
+  - catalog/node-types
+  - catalog/kubemarine
+  - catalog/kafka/small
 
 vars:
-  stage: test
+  stage: test # cluster name, prefix of cloud resource names
 
 components:
   terraform:
     infra:
       vars:
         admin_cidr: 72.56.49.160/28 # who may reach SSH and the Kubernetes API (ISP NAT pool .167-.172)
-        region: swedencentral # northeurope had no capacity for 2-vCPU sizes on this subscription
-        node_types: # trial subscription quota: 4 vCPU per region
-          control-plane: { size: Standard_D2as_v5 }
-          worker:        { size: Standard_D2as_v5 }
         nodes:
           control-plane-1: { type: control-plane }
           worker-1:        { type: worker }

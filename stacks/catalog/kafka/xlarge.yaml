@@ -1,0 +1,30 @@
+# qubership-kafka, HWE profile "Xlarge" from the qubership-kafka installation guide (3 brokers).
+# Usage: add `- catalog/kafka/xlarge` to the imports of clusters/<cluster>.yaml.
+import:
+  - catalog/kafka/defaults
+
+components:
+  helmfile:
+    kafka:
+      vars:
+        values:
+          operator:
+            resources:
+              requests: { cpu: 100m, memory: 128Mi }
+              limits:   { cpu: 200m, memory: 256Mi }
+          kafka:
+            replicas: 3
+            heapSize: 8192
+            resources:
+              requests: { cpu: 2000m, memory: 32Gi }
+              limits:   { cpu: 8000m, memory: 32Gi }
+            storage:
+              size: 1000Gi
+            environmentVariables:
+              - CONF_KAFKA_NUM_IO_THREADS=32
+              - CONF_KAFKA_NUM_NETWORK_THREADS=12
+              - CONF_KAFKA_NUM_REPLICA_FETCHERS=12
+              - CONF_KAFKA_REPLICA_SOCKET_RECEIVE_BUFFER_BYTES=1310720
+              - CONF_KAFKA_SOCKET_RECEIVE_BUFFER_BYTES=2048000
+              - CONF_KAFKA_SOCKET_SEND_BUFFER_BYTES=2048000
+              - CONF_KAFKA_AUTO_CREATE_TOPICS_ENABLE=false

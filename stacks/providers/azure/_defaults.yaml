@@ -1,6 +1,7 @@
-# Azure provider layer: shared by every Azure cluster. Clusters import it and override what they need.
-import:
-  - catalog/kubemarine
+# azure provider defaults: everything provider-specific shared by all clusters placed in azure.
+# A cluster is placed here by providers/azure/<cluster>.yaml (imports this file + clusters/<cluster>).
+settings:
+  provider: azure # stack name = <cluster>-azure
 
 # Not secrets: which subscription to use. Credentials come from `az login` (or ARM_* env in CI).
 env:
@@ -23,9 +24,9 @@ components:
         component: azure
       vars:
         region: northeurope # westeurope VM sizes are restricted for this subscription
-        # Node types: clusters reference them as `nodes.<name>.type`; override any field per cluster or per node.
-        # Fields: roles (kubemarine), size, disk_size (default 50 GB), labels, taints.
-        node_types:
-          balancer:      { roles: [balancer],      size: Standard_B2s }
-          control-plane: { roles: [control-plane], size: Standard_D4s_v5 }
-          worker:        { roles: [worker],        size: Standard_D8s_v5 }
+        # Size classes used by node types (catalog/node-types.yaml, clusters/*) -> VM sizes of this provider
+        sizes:
+          small:  Standard_B2s
+          medium: Standard_D4s_v5
+          large:  Standard_D8s_v5
+          xlarge: Standard_D16s_v5

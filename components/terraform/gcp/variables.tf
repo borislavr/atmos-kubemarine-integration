@@ -3,6 +3,11 @@ variable "project" { type = string }
 variable "region" { type = string }
 variable "zone" { type = string }
 variable "admin_cidr" { type = string }
+variable "sizes" {
+  type        = map(string)
+  default     = {}
+  description = "Size classes -> VM sizes of this provider, see modules/nodes"
+}
 variable "node_types" {
   type        = any
   description = "Node profiles, see modules/nodes"

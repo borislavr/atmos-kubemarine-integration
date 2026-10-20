@@ -1,0 +1,4 @@
+# Cluster `test` in aws (stack test-aws). Same cluster definition as test-azure; nothing aws-specific to override.
+import:
+  - providers/aws/_defaults
+  - clusters/test

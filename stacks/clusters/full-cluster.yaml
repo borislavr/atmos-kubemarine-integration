@@ -1,4 +1,5 @@
-# Cluster `full-cluster`: Azure + the kubemarine full example adapted to this project:
+# Cluster `full-cluster`, provider-agnostic: the kubemarine full example adapted to this project.
+# Placed into a cloud by providers/<cloud>/full-cluster.yaml (stack `full-cluster-<cloud>`). Source:
 # https://github.com/Netcracker/KubeMarine/blob/main/examples/cluster.yaml/full-cluster.yaml
 #
 # Taken from the example: HA topology (2 balancers, 3 control-planes, 3 workers with labels/taints), kubeadm
@@ -16,7 +17,9 @@
 #   envoy-gateway, ingress default certificate - need real certificates.
 #   calico ipip/crossSubnet - overridden by catalog/kubemarine.yaml (vxlan, always encapsulate) for clouds.
 import:
-  - providers/azure
+  - catalog/node-types
+  - catalog/kubemarine
+  - catalog/kafka/medium
 
 vars:
   stage: full-cluster
@@ -25,10 +28,10 @@ components:
   terraform:
     infra:
       vars:
-        admin_cidr: 72.56.49.160/28
+        admin_cidr: 72.56.49.160/28 # who may reach SSH and the Kubernetes API
         node_types:
-          # extra type for the example's labelled workers; balancer/control-plane/worker come from providers/azure.yaml
-          infra-worker: { roles: [worker], size: Standard_D8s_v5, labels: { netcracker-infra: infra } }
+          # extra type for the example's labelled workers; balancer/control-plane/worker come from catalog/node-types.yaml
+          infra-worker: { roles: [worker], size: large, labels: { netcracker-infra: infra } }
         nodes:
           lb-1:            { type: balancer }
           lb-2:            { type: balancer }

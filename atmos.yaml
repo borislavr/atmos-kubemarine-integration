@@ -6,11 +6,21 @@ components:
     deploy_run_init: true
     init_run_reconfigure: true
     auto_generate_backend_file: true
+  helmfile:
+    base_path: components/helmfile
+    use_eks: false # kubeconfig comes from kubemarine (env KUBECONFIG), not from EKS
 
 stacks:
   base_path: stacks
-  included_paths: ["clusters/**/*"]
-  name_pattern: "{stage}"
+  included_paths: ["providers/**/*"]
+  excluded_paths: ["**/_defaults.yaml"]
+  name_template: "{{ .vars.stage }}-{{ .settings.provider }}" # <cluster>-<cloud>
+
+# Go templates in stack manifests use <% %>: `{{ }}` stays free for kubemarine (jinja) and helm values.
+templates:
+  settings:
+    enabled: true
+    delimiters: ["<%", "%>"]
 
 workflows:
   base_path: stacks/workflows

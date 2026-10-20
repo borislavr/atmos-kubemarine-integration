@@ -1,6 +1,7 @@
 # terraform test (from components/terraform/modules/nodes): type defaults, per-node overrides, unknown type.
 
 variables {
+  sizes = { small = "vm-2cpu", medium = "vm-4cpu" }
   node_types = {
     worker = { roles = ["worker"], size = "small", labels = { tier = "app" } }
     infra  = { roles = ["worker"], size = "medium", disk_size = 100, taints = ["infra=true:NoSchedule"] }
@@ -16,8 +17,12 @@ run "resolves_types_and_overrides" {
   command = plan
 
   assert {
-    condition     = output.nodes["worker-1"].size == "small" && output.nodes["worker-1"].disk_size == 50
-    error_message = "type defaults not applied"
+    condition     = output.nodes["worker-1"].size == "vm-2cpu" && output.nodes["worker-1"].disk_size == 50
+    error_message = "type defaults / size class not applied"
+  }
+  assert {
+    condition     = output.nodes["infra-1"].size == "vm-4cpu" && output.nodes["worker-2"].size == "large"
+    error_message = "size classes must map, unknown sizes pass through as literal VM sizes"
   }
   assert {
     condition     = output.nodes["worker-2"].size == "large" && jsonencode(output.nodes["worker-2"].labels) == jsonencode({ tier = "app", zone = "b" })

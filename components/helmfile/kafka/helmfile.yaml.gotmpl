@@ -1,0 +1,16 @@
+# qubership-kafka: Kafka Service Operator + Kafka brokers (KRaft), https://github.com/Netcracker/qubership-kafka
+# All settings come from the atmos stack (state values file): see stacks/catalog/kafka/.
+# Cluster access: KUBECONFIG from the stack `env` (catalog/kubemarine.yaml).
+
+releases:
+  - name: {{ .Values.release_name }}
+    namespace: {{ .Values.namespace }}
+    createNamespace: true
+    # charts are published as GitHub release assets, not in a helm repository
+    chart: https://github.com/Netcracker/qubership-kafka/releases/download/{{ .Values.chart_version }}/kafka-{{ .Values.chart_version }}.tgz
+    # first install: the Kafka CRD (chart crds/) is not in the cluster yet, so `diff` can't validate the CR
+    disableValidationOnInstall: true
+    wait: true
+    timeout: 900
+    values:
+      - values.yaml.gotmpl

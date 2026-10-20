@@ -1,0 +1,12 @@
+# Base node types, provider-agnostic. Clusters reference them as `nodes.<name>.type`.
+# Fields: roles (kubemarine), size, disk_size (default 50 GB), labels, taints.
+# `size` is a size class (small | medium | large | xlarge) mapped by each provider's `sizes`
+# (providers/<cloud>/_defaults.yaml); a literal VM size of a specific cloud also works.
+components:
+  terraform:
+    infra:
+      vars:
+        node_types:
+          balancer:      { roles: [balancer],      size: small }
+          control-plane: { roles: [control-plane], size: medium }
+          worker:        { roles: [worker],        size: large }

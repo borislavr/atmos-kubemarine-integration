@@ -1,8 +1,14 @@
 # Resolves cluster nodes against node types: node = its type + per-node overrides.
 # Shared by all cloud components so the node model is defined once.
 
+variable "sizes" {
+  description = "Size classes of the provider: class (small, large, ...) -> VM size. A size not listed here is used as is."
+  type        = map(string)
+  default     = {}
+}
+
 variable "node_types" {
-  description = "Node profiles: kubemarine roles, VM size, disk, labels, taints"
+  description = "Node profiles: kubemarine roles, size (class or VM size), disk, labels, taints"
   type = map(object({
     roles     = list(string)
     size      = string
@@ -28,9 +34,12 @@ variable "nodes" {
 }
 
 locals {
+  # size class or literal VM size, before mapping through var.sizes
+  size = { for k, n in var.nodes : k => coalesce(n.size, var.node_types[n.type].size) }
+
   nodes = { for k, n in var.nodes : k => {
     roles     = var.node_types[n.type].roles
-    size      = coalesce(n.size, var.node_types[n.type].size)
+    size      = lookup(var.sizes, local.size[k], local.size[k])
     disk_size = coalesce(n.disk_size, var.node_types[n.type].disk_size)
     labels    = merge(var.node_types[n.type].labels, n.labels)
     taints    = n.taints != null ? n.taints : var.node_types[n.type].taints

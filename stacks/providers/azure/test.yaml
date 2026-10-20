@@ -1,0 +1,13 @@
+# Cluster `test` in Azure (stack test-azure): only Azure-specific overrides for this cluster.
+import:
+  - providers/azure/_defaults
+  - clusters/test
+
+components:
+  terraform:
+    infra:
+      vars:
+        region: swedencentral # northeurope had no capacity for 2-vCPU sizes on this subscription
+        sizes: # trial subscription quota: 4 vCPU per region
+          medium: Standard_D2as_v5
+          large:  Standard_D2as_v5

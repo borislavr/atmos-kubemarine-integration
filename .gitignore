@@ -6,3 +6,4 @@ terraform.tfstate.d/
 *.planfile
 .terraform.lock.hcl
 backend.tf.json
+*.helmfile.vars.yaml

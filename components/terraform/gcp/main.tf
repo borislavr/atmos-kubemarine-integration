@@ -46,6 +46,7 @@ resource "google_compute_firewall" "admin" {
 
 module "nodes" {
   source     = "../modules/nodes"
+  sizes      = var.sizes
   node_types = var.node_types
   nodes      = var.nodes
 }

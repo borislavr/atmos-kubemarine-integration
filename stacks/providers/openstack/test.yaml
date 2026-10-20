@@ -1,0 +1,4 @@
+# Cluster `test` in openstack (stack test-openstack). Same cluster definition as test-azure; nothing openstack-specific to override.
+import:
+  - providers/openstack/_defaults
+  - clusters/test

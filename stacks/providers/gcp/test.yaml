@@ -1,0 +1,4 @@
+# Cluster `test` in gcp (stack test-gcp). Same cluster definition as test-azure; nothing gcp-specific to override.
+import:
+  - providers/gcp/_defaults
+  - clusters/test

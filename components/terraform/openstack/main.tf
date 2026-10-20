@@ -62,6 +62,7 @@ resource "openstack_networking_secgroup_rule_v2" "admin" {
 
 module "nodes" {
   source     = "../modules/nodes"
+  sizes      = var.sizes
   node_types = var.node_types
   nodes      = var.nodes
 }

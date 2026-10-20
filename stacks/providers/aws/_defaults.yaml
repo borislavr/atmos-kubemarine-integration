@@ -1,0 +1,32 @@
+# aws provider defaults: everything provider-specific shared by all clusters placed in aws.
+# A cluster is placed here by providers/aws/<cluster>.yaml (imports this file + clusters/<cluster>).
+settings:
+  provider: aws # stack name = <cluster>-aws
+
+# Not secrets: which ~/.aws/config profile to use (`aws configure sso` / `aws configure --profile`).
+env:
+  AWS_PROFILE: my-profile
+
+terraform:
+  backend_type: s3
+  backend:
+    s3:
+      bucket: my-tfstate-aws
+      key: terraform.tfstate # atmos adds workspace_key_prefix=<component>, workspace = stack
+      region: eu-central-1
+      encrypt: true
+      use_lockfile: true
+
+components:
+  terraform:
+    infra:
+      metadata:
+        component: aws
+      vars:
+        region: eu-central-1
+        # Size classes used by node types (catalog/node-types.yaml, clusters/*) -> VM sizes of this provider
+        sizes:
+          small:  t3.small
+          medium: t3.xlarge
+          large:  m6i.2xlarge
+          xlarge: m6i.4xlarge

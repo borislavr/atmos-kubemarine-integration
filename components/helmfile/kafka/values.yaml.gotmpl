@@ -1,0 +1,10 @@
+{{- /* Chart values = stack var `values` (deep-merged by atmos) + credentials. */ -}}
+{{- $c := .Values.credentials }}
+{{- /* `ref+...` references are resolved by helmfile (vals): env vars, cloud secret managers, Vault, ... */}}
+{{- $secrets := dict "global" (dict "secrets" (dict "kafka" (dict
+  "adminUsername" $c.admin_username
+  "adminPassword" ($c.admin_password | fetchSecretValue)
+  "clientUsername" $c.client_username
+  "clientPassword" ($c.client_password | fetchSecretValue)
+))) }}
+{{- mergeOverwrite (deepCopy .Values.values) $secrets | toYaml }}

@@ -1,0 +1,30 @@
+# qubership-kafka, HWE profile "Medium" from the qubership-kafka installation guide (3 brokers).
+# Usage: add `- catalog/kafka/medium` to the imports of clusters/<cluster>.yaml.
+import:
+  - catalog/kafka/defaults
+
+components:
+  helmfile:
+    kafka:
+      vars:
+        values:
+          operator:
+            resources:
+              requests: { cpu: 100m, memory: 128Mi }
+              limits:   { cpu: 200m, memory: 256Mi }
+          kafka:
+            replicas: 3
+            heapSize: 2048
+            resources:
+              requests: { cpu: 1000m, memory: 8Gi }
+              limits:   { cpu: 2000m, memory: 8Gi }
+            storage:
+              size: 500Gi
+            environmentVariables:
+              - CONF_KAFKA_NUM_IO_THREADS=16
+              - CONF_KAFKA_NUM_NETWORK_THREADS=6
+              - CONF_KAFKA_NUM_REPLICA_FETCHERS=4
+              - CONF_KAFKA_REPLICA_SOCKET_RECEIVE_BUFFER_BYTES=131072
+              - CONF_KAFKA_SOCKET_RECEIVE_BUFFER_BYTES=204800
+              - CONF_KAFKA_SOCKET_SEND_BUFFER_BYTES=204800
+              - CONF_KAFKA_AUTO_CREATE_TOPICS_ENABLE=false

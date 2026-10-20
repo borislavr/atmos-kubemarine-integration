@@ -1,0 +1,30 @@
+# qubership-kafka defaults, cluster- and provider-agnostic (component: components/helmfile/kafka).
+# Clusters import a size profile (catalog/kafka/small|medium|large|xlarge), which imports this file.
+components:
+  helmfile:
+    kafka:
+      vars:
+        chart_version: 2.8.4
+        release_name: kafka
+        namespace: kafka
+
+        # Not secrets: `ref+` references resolved by helmfile (vals) at deploy time.
+        # Default: env vars. Per provider/cluster switch to a secret manager, e.g.
+        #   ref+azurekeyvault://<vault>/kafka-admin-password, ref+awssecrets://kafka/admin#password,
+        #   ref+gcpsecrets://<project>/kafka-admin-password, ref+vault://secret/kafka#admin_password
+        credentials:
+          admin_username: admin
+          admin_password: ref+envsubst://$KAFKA_ADMIN_PASSWORD
+          client_username: client
+          client_password: ref+envsubst://$KAFKA_CLIENT_PASSWORD
+
+        # Chart values (https://github.com/Netcracker/qubership-kafka/blob/main/docs/public/installation.md#parameters)
+        values:
+          global:
+            monitoringType: prometheus
+            installDashboard: false # needs GrafanaDashboard CRD (monitoring operator)
+          kafka:
+            kraft:
+              enabled: true # Kafka 4.x, no ZooKeeper
+            storage:
+              className: [local-path] # local disks: kubemarine plugin local-path-provisioner (catalog/kubemarine.yaml)

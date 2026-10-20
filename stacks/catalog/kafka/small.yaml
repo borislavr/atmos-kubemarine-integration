@@ -1,0 +1,25 @@
+# qubership-kafka, HWE profile "Small" from the qubership-kafka installation guide (3 brokers).
+# Usage: add `- catalog/kafka/small` to the imports of clusters/<cluster>.yaml.
+import:
+  - catalog/kafka/defaults
+
+components:
+  helmfile:
+    kafka:
+      vars:
+        values:
+          operator:
+            resources:
+              requests: { cpu: 50m, memory: 128Mi }
+              limits:   { cpu: 100m, memory: 256Mi }
+          kafka:
+            replicas: 3
+            heapSize: 512
+            resources:
+              requests: { cpu: 200m, memory: 1Gi }
+              limits:   { cpu: 500m, memory: 1Gi }
+            storage:
+              size: 30Gi
+            environmentVariables:
+              - CONF_KAFKA_NUM_REPLICA_FETCHERS=2
+              - CONF_KAFKA_AUTO_CREATE_TOPICS_ENABLE=false

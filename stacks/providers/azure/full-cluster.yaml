@@ -1,0 +1,4 @@
+# Cluster `full-cluster` in Azure (stack full-cluster-azure).
+import:
+  - providers/azure/_defaults
+  - clusters/full-cluster

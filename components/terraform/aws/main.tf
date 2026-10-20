@@ -85,6 +85,7 @@ resource "aws_security_group" "this" {
 
 module "nodes" {
   source     = "../modules/nodes"
+  sizes      = var.sizes
   node_types = var.node_types
   nodes      = var.nodes
 }
