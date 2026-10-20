@@ -1,0 +1,57 @@
+base_path: "."
+
+components:
+  terraform:
+    base_path: components/terraform
+    deploy_run_init: true
+    init_run_reconfigure: true
+    auto_generate_backend_file: true
+
+stacks:
+  base_path: stacks
+  included_paths: ["clusters/**/*"]
+  name_pattern: "{stage}"
+
+workflows:
+  base_path: stacks/workflows
+
+commands:
+  # cluster.yaml is rendered from the `kubemarine` component of the stack (nodes come from `infra` outputs);
+  # kubemarine runs locally in .kubemarine/<stack>/ (cluster.yaml, procedure.yaml, kubeconfig, dump/, reports)
+  - name: kubemarine
+    description: "Run a kubemarine procedure for a cluster stack: atmos kubemarine <procedure> -s <stack> [--nodes a,b] [-- extra kubemarine args]"
+    arguments:
+      - name: procedure
+        description: "install | add_node | remove_node | upgrade | backup | check_iaas | check_paas | do | ... (see `kubemarine help`)"
+        required: true
+    flags:
+      - name: stack
+        shorthand: s
+        description: Cluster stack, e.g. test
+        required: true
+      - name: nodes
+        description: "add_node / remove_node: comma-separated node names from the stack"
+    component_config:
+      component: kubemarine
+      stack: "{{ .Flags.stack }}"
+    steps:
+      - |
+        {{- $proc := .Arguments.procedure }}
+        {{- $cluster := .ComponentConfig.vars.cluster }}
+        {{- $cfg := index (.ComponentConfig.vars.procedures | default dict) $proc }}
+        {{- if has $proc (list "add_node" "remove_node") }}
+          {{- $sel := splitList "," (required "--nodes is required" .Flags.nodes) }}
+          {{- $picked := list }}{{ $rest := list }}
+          {{- range $cluster.nodes }}{{ if has .name $sel }}{{ $picked = append $picked . }}{{ else }}{{ $rest = append $rest . }}{{ end }}{{ end }}
+          {{- if ne (len $picked) (len $sel) }}{{ fail (printf "--nodes %s: some nodes are not in the infra outputs (apply infra first for add_node)" .Flags.nodes) }}{{ end }}
+          {{- $cfg = merge (dict "nodes" $picked) ($cfg | default dict) }}
+          {{- if eq $proc "add_node" }}{{ $cluster = set (deepCopy $cluster) "nodes" $rest }}{{ end }}
+        {{- end }}
+        set -e
+        mkdir -p .kubemarine/{{ .Flags.stack }}
+        cd .kubemarine/{{ .Flags.stack }}
+        echo '{{ toJson $cluster }}' > cluster.yaml
+        {{- if $cfg }}
+        echo '{{ toJson $cfg }}' > procedure.yaml
+        {{- end }}
+        kubemarine {{ $proc }} {{ if $cfg }}procedure.yaml {{ end }}--config cluster.yaml {{ .TrailingArgs }}

@@ -1,0 +1,41 @@
+# OpenStack provider layer: shared by every OpenStack cluster. Clusters import it and override what they need.
+import:
+  - catalog/kubemarine
+
+# Not secrets: cloud name in ~/.config/openstack/clouds.yaml (password/app credential in secure.yaml).
+env:
+  OS_CLOUD: my-cloud
+
+# State in the object store via its S3 API (Swift s3api / Ceph RGW).
+terraform:
+  backend_type: s3
+  backend:
+    s3:
+      bucket: tfstate
+      key: terraform.tfstate
+      profile: openstack-tfstate # ~/.aws/credentials profile with `openstack ec2 credentials create` keys
+      region: us-east-1 # ignored by S3-compatible stores, must be non-empty
+      endpoints:
+        s3: https://object-store.example.com
+      use_path_style: true
+      skip_credentials_validation: true
+      skip_region_validation: true
+      skip_requesting_account_id: true
+      skip_metadata_api_check: true
+      skip_s3_checksum: true
+      use_lockfile: false # ponytail: no state locking; set true if the store supports conditional writes (If-None-Match)
+
+components:
+  terraform:
+    infra:
+      metadata:
+        component: openstack
+      vars:
+        external_network: public
+        image: ubuntu-22.04
+        # Node types: clusters reference them as `nodes.<name>.type`; override any field per cluster or per node.
+        # Fields: roles (kubemarine), size, disk_size (default 50 GB), labels, taints.
+        node_types:
+          balancer:      { roles: [balancer],      size: m1.small }
+          control-plane: { roles: [control-plane], size: m1.large }
+          worker:        { roles: [worker],        size: m1.xlarge }

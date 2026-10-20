@@ -1,0 +1,21 @@
+# Kubemarine settings shared by all clusters. Not a terraform root module (abstract):
+# `atmos kubemarine <procedure> -s <stack>` renders `vars.cluster` into cluster.yaml.
+components:
+  terraform:
+    kubemarine:
+      metadata:
+        type: abstract
+      vars:
+        # cluster.yaml content, see https://github.com/Netcracker/KubeMarine/blob/main/docs/public/Installation.md
+        cluster:
+          cluster_name: k8s.local
+          node_defaults:
+            username: ubuntu
+            keyfile: ~/.ssh/id_ed25519
+          nodes: !terraform.output infra nodes
+          plugins:
+            calico:
+              mode: vxlan # IPIP is blocked on Azure; VXLAN works everywhere
+              crossSubnet: false # always encapsulate: clouds drop raw pod IPs even inside one subnet
+        # procedure.yaml per procedure name (upgrade plan, backup settings, grace_period, ...)
+        procedures: {}

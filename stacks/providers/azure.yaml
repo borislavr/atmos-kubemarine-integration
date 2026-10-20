@@ -1,0 +1,31 @@
+# Azure provider layer: shared by every Azure cluster. Clusters import it and override what they need.
+import:
+  - catalog/kubemarine
+
+# Not secrets: which subscription to use. Credentials come from `az login` (or ARM_* env in CI).
+env:
+  ARM_SUBSCRIPTION_ID: 3a9387c7-b197-478e-a025-02f75de13143
+
+terraform:
+  backend_type: azurerm
+  backend:
+    azurerm:
+      resource_group_name: tfstate
+      storage_account_name: tfstate3a9387c7
+      container_name: tfstate
+      key: atmos # atmos appends /<component>.terraform.tfstate, workspace = stack
+      use_azuread_auth: true
+
+components:
+  terraform:
+    infra:
+      metadata:
+        component: azure
+      vars:
+        region: northeurope # westeurope VM sizes are restricted for this subscription
+        # Node types: clusters reference them as `nodes.<name>.type`; override any field per cluster or per node.
+        # Fields: roles (kubemarine), size, disk_size (default 50 GB), labels, taints.
+        node_types:
+          balancer:      { roles: [balancer],      size: Standard_B2s }
+          control-plane: { roles: [control-plane], size: Standard_D4s_v5 }
+          worker:        { roles: [worker],        size: Standard_D8s_v5 }

@@ -1,0 +1,120 @@
+# Cluster `full-cluster`: Azure + the kubemarine full example adapted to this project:
+# https://github.com/Netcracker/KubeMarine/blob/main/examples/cluster.yaml/full-cluster.yaml
+#
+# Taken from the example: HA topology (2 balancers, 3 control-planes, 3 workers with labels/taints), kubeadm
+# settings, resolv.conf, NTP, AppArmor, haproxy, packages, RBAC accounts, PSS, calico/ingress/dashboard plugins.
+# Generated here instead of hardcoded: node addresses (terraform outputs), certSANs (kubemarine adds all node
+# IPs/names by default), node_defaults (catalog/kubemarine.yaml).
+# Dropped on purpose:
+#   vrrp_ips             - clouds don't route a floating VRRP IP between VMs; the API endpoint is the first balancer.
+#                          For a real VIP put a cloud load balancer in front of the balancers.
+#   public_cluster_ip, controlPlaneEndpoint - kubemarine derives them from the balancers.
+#   imageRepository, registry, containerdRegistriesConfig, thirdparties, package repositories
+#                        - point to a private artifactory (air-gapped install); nodes here pull from the internet.
+#   cri.containerdConfig - example is for containerd 1.x config v2; kubemarine defaults match the installed containerd.
+#   selinux, rhel modprobe/associations - RHEL only; nodes are Ubuntu 22.04.
+#   envoy-gateway, ingress default certificate - need real certificates.
+#   calico ipip/crossSubnet - overridden by catalog/kubemarine.yaml (vxlan, always encapsulate) for clouds.
+import:
+  - providers/azure
+
+vars:
+  stage: full-cluster
+
+components:
+  terraform:
+    infra:
+      vars:
+        admin_cidr: 72.56.49.160/28
+        node_types:
+          # extra type for the example's labelled workers; balancer/control-plane/worker come from providers/azure.yaml
+          infra-worker: { roles: [worker], size: Standard_D8s_v5, labels: { netcracker-infra: infra } }
+        nodes:
+          lb-1:            { type: balancer }
+          lb-2:            { type: balancer }
+          control-plane-1: { type: control-plane }
+          control-plane-2: { type: control-plane }
+          control-plane-3: { type: control-plane }
+          worker-1:        { type: worker, taints: ["node-role.kubernetes.io/add-example=add-example:NoSchedule"] }
+          worker-2:        { type: infra-worker, labels: { region: europe } }
+          worker-3:        { type: infra-worker, labels: { region: asia } }
+
+    kubemarine:
+      vars:
+        cluster:
+          cluster_name: full-cluster.k8s.local
+
+          services:
+            kubeadm:
+              kubernetesVersion: v1.34.2
+              networking:
+                podSubnet: 10.128.0.0/14 # example's /24 fits only 4 calico /26 blocks - too small for 8 nodes
+                serviceSubnet: 172.30.0.0/16
+              apiServer:
+                extraArgs:
+                  enable-admission-plugins: NodeRestriction,PodNodeSelector
+
+            resolv.conf:
+              search: default
+              nameservers: [1.1.1.1, 1.0.0.1]
+
+            ntp:
+              timesyncd: # Debian/Ubuntu variant from the example
+                Time:
+                  NTP: [0.de.pool.ntp.org, 1.de.pool.ntp.org]
+                  FallbackNTP: [2.de.pool.ntp.org, 3.de.pool.ntp.org]
+                  RootDistanceMaxSec: 10
+                  PollIntervalMinSec: 64
+                  PollIntervalMaxSec: 1024
+
+            kernel_security:
+              apparmor:
+                complain: [man_filter]
+                disable: [man_groff]
+
+            loadbalancer:
+              haproxy:
+                defaults:
+                  timeout_connect: 10s
+                  timeout_client: 1m
+                  timeout_server: 1m
+                  timeout_tunnel: 60m
+                  timeout_client_fin: 1m
+                  maxconn: 10000
+                keep_configs_updated: true
+
+            packages:
+              install:
+                include: [ethtool, ebtables, socat, curl, openssl, unzip]
+
+          rbac:
+            accounts:
+              - name: superadmin
+                role: cluster-admin
+              - name: superadmin2
+                role: cluster-admin
+                namespace: kube-system
+            admission: pss
+            pss:
+              pod-security: enabled
+              defaults:
+                enforce: restricted
+                enforce-version: latest
+                audit: restricted
+                audit-version: latest
+                warn: restricted
+                warn-version: latest
+              exemptions:
+                namespaces: [kube-system]
+
+          plugins:
+            calico:
+              typha:
+                enabled: false
+              apiserver:
+                enabled: true
+            nginx-ingress-controller:
+              install: true
+            kubernetes-dashboard:
+              install: true
+              hostname: dashboard.full-cluster.k8s.local

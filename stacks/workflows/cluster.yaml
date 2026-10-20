@@ -1,0 +1,10 @@
+workflows:
+  deploy:
+    description: Create/update cloud resources, then install Kubernetes with kubemarine
+    steps:
+      - command: terraform apply infra -auto-approve
+      - command: kubemarine install
+  destroy:
+    description: Delete all cloud resources of the cluster
+    steps:
+      - command: terraform destroy infra -auto-approve
