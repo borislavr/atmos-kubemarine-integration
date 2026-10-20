@@ -11,6 +11,11 @@ data "openstack_networking_network_v2" "external" {
   name = var.external_network
 }
 
+
+locals {
+  admin_cidrs = compact([var.admin_cidr, var.ci_cidr])
+}
+
 # --- network ---
 
 resource "openstack_networking_network_v2" "this" {
@@ -48,14 +53,14 @@ resource "openstack_networking_secgroup_rule_v2" "internal" {
 }
 
 resource "openstack_networking_secgroup_rule_v2" "admin" {
-  for_each          = toset([for p in var.admin_ports : tostring(p)])
+  for_each          = { for pc in setproduct(var.admin_ports, local.admin_cidrs) : "${pc[0]}-${pc[1]}" => pc }
   security_group_id = openstack_networking_secgroup_v2.this.id
   direction         = "ingress"
   ethertype         = "IPv4"
   protocol          = "tcp"
-  port_range_min    = each.key
-  port_range_max    = each.key
-  remote_ip_prefix  = var.admin_cidr
+  port_range_min    = each.value[0]
+  port_range_max    = each.value[0]
+  remote_ip_prefix  = each.value[1]
 }
 
 # --- compute ---

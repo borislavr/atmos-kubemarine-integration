@@ -37,10 +37,13 @@ commands:
     flags:
       - name: stack
         shorthand: s
-        description: Cluster stack, e.g. test
+        description: Cluster stack, e.g. test-azure
         required: true
       - name: nodes
         description: "add_node / remove_node: comma-separated node names from the stack"
+      - name: dry-run
+        type: bool
+        description: "Only render and print cluster.yaml / procedure.yaml and the kubemarine command; do not run it"
     component_config:
       component: kubemarine
       stack: "{{ .Flags.stack }}"
@@ -64,4 +67,41 @@ commands:
         {{- if $cfg }}
         echo '{{ toJson $cfg }}' > procedure.yaml
         {{- end }}
-        kubemarine {{ $proc }} {{ if $cfg }}procedure.yaml {{ end }}--config cluster.yaml {{ .TrailingArgs }}
+        {{- $cmd := printf "kubemarine %s %s--config cluster.yaml %s" $proc (ternary "procedure.yaml " "" (not (empty $cfg))) .TrailingArgs }}
+        {{- if eq (toString (index .Flags "dry-run")) "true" }}
+        echo '--- .kubemarine/{{ .Flags.stack }}/cluster.yaml'
+        echo '{{ toPrettyJson $cluster }}'
+        {{- if $cfg }}
+        echo '--- .kubemarine/{{ .Flags.stack }}/procedure.yaml'
+        echo '{{ toPrettyJson $cfg }}'
+        {{- end }}
+        echo '--- dry run, not executed: {{ $cmd }}'
+        {{- else }}
+        {{ $cmd }}
+        {{- end }}
+
+  # Fetches the admin kubeconfig from the first control-plane (e.g. in CI or on a new machine) into
+  # .kubemarine/<stack>/kubeconfig; API endpoint = first balancer, else first control-plane (public address).
+  - name: kubeconfig
+    description: "Fetch the cluster admin kubeconfig: atmos kubeconfig -s <stack>"
+    flags:
+      - name: stack
+        shorthand: s
+        description: Cluster stack, e.g. test-azure
+        required: true
+    component_config:
+      component: kubemarine
+      stack: "{{ .Flags.stack }}"
+    steps:
+      - |
+        {{- $c := .ComponentConfig.vars.cluster }}
+        {{- $cp := "" }}{{ $api := "" }}
+        {{- range $c.nodes }}{{ if and (not $cp) (has "control-plane" .roles) }}{{ $cp = .address }}{{ end }}{{ end }}
+        {{- range $c.nodes }}{{ if and (not $api) (has "balancer" .roles) }}{{ $api = .address }}{{ end }}{{ end }}
+        {{- $f := printf ".kubemarine/%s/kubeconfig" .Flags.stack }}
+        set -e
+        mkdir -p .kubemarine/{{ .Flags.stack }}
+        ssh -i {{ $c.node_defaults.keyfile }} -o StrictHostKeyChecking=accept-new -o ConnectTimeout=30 {{ $c.node_defaults.username }}@{{ required "no control-plane in infra outputs" $cp }} sudo cat /etc/kubernetes/admin.conf > {{ $f }}.tmp
+        mv {{ $f }}.tmp {{ $f }}
+        kubectl --kubeconfig {{ $f }} config set-cluster kubernetes --server https://{{ $api | default $cp }}:6443
+        echo "KUBECONFIG={{ $f }}"

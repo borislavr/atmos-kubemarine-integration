@@ -9,6 +9,11 @@ provider "azurerm" {
   features {}
 }
 
+
+locals {
+  admin_cidrs = compact([var.admin_cidr, var.ci_cidr])
+}
+
 # --- network ---
 
 resource "azurerm_resource_group" "this" {
@@ -43,7 +48,7 @@ resource "azurerm_network_security_group" "this" {
     protocol                   = "Tcp"
     source_port_range          = "*"
     destination_port_ranges    = [for p in var.admin_ports : tostring(p)]
-    source_address_prefix      = var.admin_cidr
+    source_address_prefixes    = local.admin_cidrs
     destination_address_prefix = "*"
   }
 }

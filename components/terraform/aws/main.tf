@@ -21,6 +21,11 @@ data "aws_ami" "ubuntu" {
   }
 }
 
+
+locals {
+  admin_cidrs = compact([var.admin_cidr, var.ci_cidr])
+}
+
 # --- network ---
 
 resource "aws_vpc" "this" {
@@ -70,7 +75,7 @@ resource "aws_security_group" "this" {
       from_port   = ingress.value
       to_port     = ingress.value
       protocol    = "tcp"
-      cidr_blocks = [var.admin_cidr]
+      cidr_blocks = local.admin_cidrs
     }
   }
   egress {

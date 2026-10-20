@@ -10,6 +10,11 @@ provider "google" {
   zone    = var.zone
 }
 
+
+locals {
+  admin_cidrs = compact([var.admin_cidr, var.ci_cidr])
+}
+
 # --- network ---
 
 resource "google_compute_network" "this" {
@@ -35,7 +40,7 @@ resource "google_compute_firewall" "internal" {
 resource "google_compute_firewall" "admin" {
   name          = "${var.stage}-admin"
   network       = google_compute_network.this.id
-  source_ranges = [var.admin_cidr]
+  source_ranges = local.admin_cidrs
   allow {
     protocol = "tcp"
     ports    = [for p in var.admin_ports : tostring(p)]

@@ -261,16 +261,21 @@ atmos kubemarine <procedure> -s <stack> [--nodes a,b] [-- <доп. аргуме�
 
 - `procedure.yaml` для процедуры берётся из `vars.procedures.<procedure>` стека (например, план `upgrade`).
 - `add_node` / `remove_node`: ноды из `--nodes`. Для `add_node` они исключаются из `cluster.yaml` и попадают в `procedure.yaml` (как требует kubemarine).
+- `--dry-run`: только собрать и показать `cluster.yaml`, `procedure.yaml` и команду kubemarine, не запуская её.
 
 Примеры:
 ```sh
 atmos kubemarine check_iaas -s test-azure
+atmos kubemarine add_node -s test-azure --nodes worker-3 --dry-run     # посмотреть, что уйдёт в kubemarine
 atmos kubemarine install -s test-azure
 atmos kubemarine install -s test-azure -- --tasks deploy.plugins          # только часть задач
 atmos kubemarine check_paas -s test-azure
 atmos kubemarine do -s test-azure -- -g control-plane --no_stream -- sudo kubectl get nodes   # команда на нодах
 atmos kubemarine backup -s test-azure
 ```
+
+`atmos kubeconfig -s <stack>` — забрать admin kubeconfig с control-plane в `.kubemarine/<stack>/kubeconfig`
+(на новой машине или в CI, где `install` не запускался).
 
 ## 6. Изменение кластера
 
@@ -408,7 +413,16 @@ atmos helmfile destroy kafka -s test-azure
 Новое приложение делается так же: `components/helmfile/<app>/helmfile.yaml.gotmpl` (+ `values.yaml.gotmpl`,
 которому atmos передаёт `vars` как `.Values`) и `stacks/catalog/<app>/` с defaults и профилями.
 
-## 8. Как создавался кластер `test` (Azure, стек `test-azure`)
+## 8. GitHub Actions
+
+Workflow [cluster](.github/workflows/cluster.yaml) запускается вручную и выполняет те же команды для выбранного стека:
+`plan`, `deploy`, `infra`, `kubemarine`, `apps`, `destroy`, в том числе в режиме dry run. Креды облаков — из секретов GitHub (OIDC или ключи).
+Какие секреты завести и как их получить для каждого провайдера — [.github/workflows/README.md](.github/workflows/README.md).
+
+Раннеру на время запуска открывается доступ к нодам: облачные модули добавляют его IP (`ci_cidr`, `TF_VAR_ci_cidr`)
+к `admin_cidr` в правиле firewall, в конце запуска IP убирается.
+
+## 9. Как создавался кластер `test` (Azure, стек `test-azure`)
 
 ```sh
 az login --tenant 7cb71954-...                         # MFA-тенант
@@ -432,7 +446,7 @@ export KUBECONFIG=$PWD/.kubemarine/test-azure/kubeconfig && kubectl get nodes
 `check_iaas` на `test` оставляет FAIL по vCPU worker-а (2 < 4, ограничение квоты) и PodSubnet/ServiceSubnet
 (проверка шлёт неинкапсулированные пакеты, облако их режет; с VXLAN это не мешает). Установка проходит.
 
-## 9. Упрощения
+## 10. Упрощения
 
 - Ноды получают публичные IP: kubemarine ходит на них по SSH напрямую, входящий трафик открыт только с `admin_cidr` на `admin_ports` (22, 6443).
   Если ноды должны быть приватными — верните bastion и используйте `gateway_nodes` kubemarine.

@@ -1,0 +1,248 @@
+# Manual cluster operations: cloud resources (atmos terraform), Kubernetes (atmos kubemarine), apps (atmos helmfile).
+# Secrets and how to get them: .github/workflows/README.md
+name: cluster
+
+on:
+  workflow_dispatch:
+    inputs:
+      stack:
+        description: "Stack <cluster>-<cloud>, e.g. test-azure (`atmos list stacks`)"
+        required: true
+        type: string
+      action:
+        description: "plan | deploy (infra + kubemarine install + apps) | infra | kubemarine | apps | destroy"
+        required: true
+        type: choice
+        options: [plan, deploy, infra, kubemarine, apps, destroy]
+        default: plan
+      kubemarine:
+        description: "action=kubemarine: procedure + args, e.g. `install`, `add_node --nodes worker-3`, `install -- --tasks deploy.plugins`"
+        type: string
+        default: install
+      apps:
+        description: "action=deploy|apps: helmfile components, space-separated"
+        type: string
+        default: kafka
+      confirm:
+        description: "action=destroy: type the stack name again"
+        type: string
+      dry_run:
+        description: "Dry run: change nothing, show what would be done (terraform plan, rendered cluster.yaml, helm manifests)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write # OIDC login to the clouds
+
+concurrency:
+  group: cluster-${{ inputs.stack }}
+  cancel-in-progress: false
+
+env:
+  ATMOS_VERSION: 1.230.1
+  TERRAFORM_VERSION: 1.15.8
+  KUBEMARINE_VERSION: 0.54.0
+  HELM_VERSION: v3.22.1
+  HELMFILE_VERSION: 1.8.2
+  HELM_DIFF_VERSION: 3.15.15
+  STACK: ${{ inputs.stack }}
+  ACTION: ${{ inputs.action }}
+  KUBEMARINE_ARGS: ${{ inputs.kubemarine }}
+  APPS: ${{ inputs.apps }}
+  DRY_RUN: ${{ inputs.dry_run }}
+  # app secrets, referenced from stacks as ref+envsubst://$NAME
+  KAFKA_ADMIN_PASSWORD: ${{ secrets.KAFKA_ADMIN_PASSWORD }}
+  KAFKA_CLIENT_PASSWORD: ${{ secrets.KAFKA_CLIENT_PASSWORD }}
+
+jobs:
+  cluster:
+    name: ${{ inputs.action }} ${{ inputs.stack }}${{ inputs.dry_run && ' (dry run)' || '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check inputs
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          if [ "$ACTION" = destroy ] && [ "$DRY_RUN" != true ] && [ "$CONFIRM" != "$STACK" ]; then
+            echo "::error::destroy needs confirm = $STACK"; exit 1
+          fi
+          provider="${STACK##*-}"
+          # firewall resource with admin_cidr/ci_cidr rules, per cloud component
+          case "$provider" in
+            aws)       firewall=aws_security_group.this ;;
+            gcp)       firewall=google_compute_firewall.admin ;;
+            azure)     firewall=azurerm_network_security_group.this ;;
+            openstack) firewall=openstack_networking_secgroup_rule_v2.admin ;;
+            *) echo "::error::unknown provider '$provider' in stack '$STACK'"; exit 1 ;;
+          esac
+          # deploy/kubemarine/apps reach the nodes (SSH, Kubernetes API) from this runner; a dry run doesn't
+          case "$ACTION" in deploy|kubemarine|apps) needs_access=true ;; *) needs_access=false ;; esac
+          if [ "$DRY_RUN" = true ]; then needs_access=false; fi
+          { echo "PROVIDER=$provider"; echo "FIREWALL=$firewall"; echo "NEEDS_ACCESS=$needs_access"; } >> "$GITHUB_ENV"
+
+      # --- tools ---
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+      - uses: cloudposse/github-action-setup-atmos@v2
+        with:
+          atmos-version: ${{ env.ATMOS_VERSION }}
+          install-wrapper: false
+      - uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+      - name: Install kubemarine, helmfile, helm-diff
+        run: |
+          bin="$HOME/.local/bin"; mkdir -p "$bin"; echo "$bin" >> "$GITHUB_PATH"
+          curl -sSfL -o "$bin/kubemarine" \
+            "https://github.com/Netcracker/KubeMarine/releases/download/v${KUBEMARINE_VERSION}/kubemarine-linux-x86_64"
+          chmod +x "$bin/kubemarine"
+          curl -sSfL "https://github.com/helmfile/helmfile/releases/download/v${HELMFILE_VERSION}/helmfile_${HELMFILE_VERSION}_linux_amd64.tar.gz" \
+            | tar -xz -C "$bin" helmfile
+          helm plugin install https://github.com/databus23/helm-diff --version "v${HELM_DIFF_VERSION}"
+
+      # --- cloud credentials (only the stack's provider) ---
+      - name: Azure credentials
+        if: env.PROVIDER == 'azure'
+        env:
+          CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: |
+          # subscription: env.ARM_SUBSCRIPTION_ID of the stack; terraform provider and azurerm backend read ARM_*
+          { echo "ARM_CLIENT_ID=$CLIENT_ID"; echo "ARM_TENANT_ID=$TENANT_ID"; } >> "$GITHUB_ENV"
+          if [ -n "$CLIENT_SECRET" ]; then echo "ARM_CLIENT_SECRET=$CLIENT_SECRET" >> "$GITHUB_ENV"
+          else echo "ARM_USE_OIDC=true" >> "$GITHUB_ENV"; fi
+
+      - name: AWS credentials
+        if: env.PROVIDER == 'aws'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1 # STS only; resources use the stack's region
+      - name: AWS profile named in the stack
+        if: env.PROVIDER == 'aws'
+        run: |
+          # the stack sets AWS_PROFILE (local SSO profile); create it here from the session credentials
+          profile=$(atmos describe component infra -s "$STACK" --process-functions=false --format json | jq -r '.env.AWS_PROFILE // empty')
+          [ -n "$profile" ] || exit 0
+          aws configure set aws_access_key_id "$AWS_ACCESS_KEY_ID" --profile "$profile"
+          aws configure set aws_secret_access_key "$AWS_SECRET_ACCESS_KEY" --profile "$profile"
+          if [ -n "${AWS_SESSION_TOKEN:-}" ]; then aws configure set aws_session_token "$AWS_SESSION_TOKEN" --profile "$profile"; fi
+
+      - name: GCP credentials
+        if: env.PROVIDER == 'gcp'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          credentials_json: ${{ secrets.GCP_CREDENTIALS_JSON }}
+
+      - name: OpenStack credentials
+        if: env.PROVIDER == 'openstack'
+        env:
+          CLOUDS_YAML: ${{ secrets.OPENSTACK_CLOUDS_YAML }}
+          S3_ACCESS_KEY: ${{ secrets.OPENSTACK_S3_ACCESS_KEY }}
+          S3_SECRET_KEY: ${{ secrets.OPENSTACK_S3_SECRET_KEY }}
+        run: |
+          # clouds.yaml must contain the cloud named in the stack (env.OS_CLOUD)
+          install -m 700 -d ~/.config/openstack
+          printf '%s\n' "$CLOUDS_YAML" > ~/.config/openstack/clouds.yaml
+          chmod 600 ~/.config/openstack/clouds.yaml
+          # state backend (S3 API of the object store) uses the profile named in the stack backend
+          profile=$(atmos describe component infra -s "$STACK" --process-functions=false --format json | jq -r '.backend.profile // empty')
+          [ -n "$profile" ] || exit 0
+          aws configure set aws_access_key_id "$S3_ACCESS_KEY" --profile "$profile"
+          aws configure set aws_secret_access_key "$S3_SECRET_KEY" --profile "$profile"
+
+      - name: SSH key
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          # same path as the stacks expect: ~/.ssh/id_ed25519(.pub)
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keygen -y -f ~/.ssh/id_ed25519 > ~/.ssh/id_ed25519.pub
+
+      # --- access for this runner: admin_cidr + runner IP (ci_cidr) for the duration of the run ---
+      - name: Open cluster firewall for this runner
+        if: env.NEEDS_ACCESS == 'true'
+        run: |
+          echo "TF_VAR_ci_cidr=$(curl -sSf https://api.ipify.org)/32" >> "$GITHUB_ENV"
+      - name: Apply firewall
+        if: env.NEEDS_ACCESS == 'true' && env.ACTION != 'deploy' # deploy applies everything below
+        run: atmos terraform apply infra -s "$STACK" -auto-approve -target="$FIREWALL"
+
+      # --- actions ---
+      - name: terraform plan
+        if: env.ACTION == 'plan'
+        run: atmos terraform plan infra -s "$STACK"
+
+      - name: terraform ${{ inputs.dry_run && 'plan' || 'apply' }}
+        if: env.ACTION == 'deploy' || env.ACTION == 'infra'
+        run: |
+          if [ "$DRY_RUN" = true ]; then atmos terraform plan infra -s "$STACK"
+          else atmos terraform apply infra -s "$STACK" -auto-approve; fi
+
+      - name: Wait for SSH on all nodes
+        if: env.NEEDS_ACCESS == 'true'
+        run: |
+          # new VMs boot and firewall rules propagate with a delay; `do` connects to every node
+          for i in $(seq 1 20); do
+            atmos kubemarine do -s "$STACK" -- --no_stream -- true && exit 0
+            echo "nodes not reachable yet ($i/20)"; sleep 15
+          done
+          exit 1
+
+      - name: kubemarine install
+        if: env.ACTION == 'deploy'
+        run: atmos kubemarine install -s "$STACK" --dry-run="$DRY_RUN"
+      - name: kubemarine ${{ inputs.kubemarine }}
+        if: env.ACTION == 'kubemarine'
+        run: |
+          # word splitting of the input is intended: procedure, flags, `-- <kubemarine args>`
+          # (--dry-run goes before them, so it never ends up after `--`)
+          # shellcheck disable=SC2086
+          atmos kubemarine -s "$STACK" --dry-run="$DRY_RUN" $KUBEMARINE_ARGS
+
+      - name: kubeconfig
+        if: env.ACTION == 'apps' && env.DRY_RUN != 'true'
+        run: atmos kubeconfig -s "$STACK"
+      - name: helmfile ${{ inputs.dry_run && 'template' || 'apply' }} ${{ inputs.apps }}
+        if: env.ACTION == 'deploy' || env.ACTION == 'apps'
+        run: |
+          for app in $APPS; do
+            if [ "$app" = kafka ] && { [ -z "$KAFKA_ADMIN_PASSWORD" ] || [ -z "$KAFKA_CLIENT_PASSWORD" ]; }; then
+              echo "::error::kafka needs secrets KAFKA_ADMIN_PASSWORD and KAFKA_CLIENT_PASSWORD"; exit 1
+            fi
+            if [ "$DRY_RUN" = true ]; then
+              # rendered offline, no cluster access; only the resource list is printed (manifests contain secrets)
+              atmos helmfile template "$app" -s "$STACK" > "rendered-$app.yaml"
+              echo "$app: resources that would be applied:"
+              awk '/^kind:/ {k=$2} /^  name:/ && k {print "  " k "/" $2; k=""}' "rendered-$app.yaml"
+            else
+              atmos helmfile apply "$app" -s "$STACK"
+            fi
+          done
+
+      - name: terraform ${{ inputs.dry_run && 'plan -destroy' || 'destroy' }}
+        if: env.ACTION == 'destroy'
+        run: |
+          if [ "$DRY_RUN" = true ]; then atmos terraform plan infra -s "$STACK" -destroy
+          else atmos terraform destroy infra -s "$STACK" -auto-approve; fi
+
+      # --- close access again, also after failures ---
+      - name: Close cluster firewall
+        if: always() && env.NEEDS_ACCESS == 'true'
+        run: |
+          # only if the firewall exists (a failed first deploy must not create resources here)
+          atmos terraform state list infra -s "$STACK" | grep -q "^${FIREWALL}" || exit 0
+          TF_VAR_ci_cidr="" atmos terraform apply infra -s "$STACK" -auto-approve -target="$FIREWALL"
