@@ -83,8 +83,33 @@ commands:
         echo '{{ toPrettyJson $cfg }}'
         {{- end }}
         echo '--- dry run, not executed: {{ $cmd }}'
-        {{- else }}
+        {{- else if not (env "GITHUB_STEP_SUMMARY") }}
         {{ $cmd }}
+        {{- else }}
+        # CI: job summary like atmos terraform/helmfile (https://atmos.tools/ci): status, duration, log tail
+        start=$(date +%s)
+        set +e
+        set -o pipefail
+        {{ $cmd }} 2>&1 | tee kubemarine.log
+        rc=$?
+        set -e
+        if [ "$rc" = 0 ]; then status="✅ succeeded"; else status="❌ failed (exit code $rc)"; fi
+        # via a variable: in the atmos step shell external commands can't write to a redirected file on Windows
+        log=$(tail -n 200 kubemarine.log)
+        {
+          echo "## kubemarine \`{{ $proc }}\` in \`{{ .Flags.stack }}\`"
+          echo
+          echo "$status in $(( $(date +%s) - start ))s{{ with .Flags.nodes }}, nodes: \`{{ . }}\`{{ end }}"
+          echo
+          echo "<details><summary>Output (last 200 lines)</summary>"
+          echo
+          echo '```text'
+          echo "$log"
+          echo '```'
+          echo "</details>"
+          echo
+        } >> "$GITHUB_STEP_SUMMARY"
+        exit "$rc"
         {{- end }}
 
   # Fetches the admin kubeconfig from the first control-plane (e.g. in CI or on a new machine) into
