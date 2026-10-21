@@ -25,6 +25,13 @@ templates:
 workflows:
   base_path: stacks/workflows
 
+# Native CI (https://atmos.tools/ci): auto-enabled under GitHub Actions; terraform/helmfile write the job summary.
+# Checks and PR comments are off: the workflow is manual (workflow_dispatch), there are no PRs to report to.
+ci:
+  enabled: true
+  summary:
+    enabled: true
+
 commands:
   # cluster.yaml is rendered from the `kubemarine` component of the stack (nodes come from `infra` outputs);
   # kubemarine runs locally in .kubemarine/<stack>/ (cluster.yaml, procedure.yaml, kubeconfig, dump/, reports)
