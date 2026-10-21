@@ -12,24 +12,28 @@ provider "azurerm" {
 
 locals {
   admin_cidrs = compact([var.admin_cidr, var.ci_cidr])
+  # cost allocation (Cost Management: group/filter by tag); subnets and NSG associations have no tags
+  tags = { "cost-usage" = var.stage }
 }
 
 # --- network ---
 
 resource "azurerm_resource_group" "this" {
-  name     = var.stage
+  name     = "rg-${var.stage}"
   location = var.region
+  tags     = local.tags
 }
 
 resource "azurerm_virtual_network" "this" {
-  name                = var.stage
+  name                = "vnet-${var.stage}"
   location            = var.region
+  tags                = local.tags
   resource_group_name = azurerm_resource_group.this.name
   address_space       = [var.cidr]
 }
 
 resource "azurerm_subnet" "this" {
-  name                 = var.stage
+  name                 = "snet-${var.stage}"
   resource_group_name  = azurerm_resource_group.this.name
   virtual_network_name = azurerm_virtual_network.this.name
   address_prefixes     = [var.cidr]
@@ -37,8 +41,9 @@ resource "azurerm_subnet" "this" {
 
 # Default NSG rules already allow VNet-internal traffic and deny inbound from Internet.
 resource "azurerm_network_security_group" "this" {
-  name                = var.stage
+  name                = "nsg-${var.stage}"
   location            = var.region
+  tags                = local.tags
   resource_group_name = azurerm_resource_group.this.name
   security_rule {
     name                       = "admin"
@@ -69,8 +74,9 @@ module "nodes" {
 
 resource "azurerm_public_ip" "node" {
   for_each            = module.nodes.nodes
-  name                = "${var.stage}-${each.key}"
+  name                = "pip-${var.stage}-${each.key}"
   location            = var.region
+  tags                = local.tags
   resource_group_name = azurerm_resource_group.this.name
   allocation_method   = "Static"
   sku                 = "Standard"
@@ -78,8 +84,9 @@ resource "azurerm_public_ip" "node" {
 
 resource "azurerm_network_interface" "node" {
   for_each            = module.nodes.nodes
-  name                = "${var.stage}-${each.key}"
+  name                = "nic-${var.stage}-${each.key}"
   location            = var.region
+  tags                = local.tags
   resource_group_name = azurerm_resource_group.this.name
   ip_configuration {
     name                          = "primary"
@@ -93,6 +100,7 @@ resource "azurerm_linux_virtual_machine" "node" {
   for_each              = module.nodes.nodes
   name                  = "${var.stage}-${each.key}"
   location              = var.region
+  tags                  = local.tags
   resource_group_name   = azurerm_resource_group.this.name
   size                  = each.value.size
   admin_username        = "ubuntu"
@@ -102,6 +110,7 @@ resource "azurerm_linux_virtual_machine" "node" {
     public_key = file(pathexpand(var.ssh_public_key_file))
   }
   os_disk {
+    name                 = "osdisk-${var.stage}-${each.key}"
     caching              = "ReadWrite"
     storage_account_type = "Standard_LRS"
     disk_size_gb         = each.value.disk_size

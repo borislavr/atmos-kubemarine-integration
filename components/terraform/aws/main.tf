@@ -6,6 +6,10 @@ terraform {
 
 provider "aws" {
   region = var.region
+  # cost allocation on every resource (incl. root volumes); activate the tag in Billing -> Cost allocation tags
+  default_tags {
+    tags = { "cost-usage" = var.stage }
+  }
 }
 
 data "aws_availability_zones" "this" {
@@ -31,11 +35,12 @@ locals {
 resource "aws_vpc" "this" {
   cidr_block           = var.cidr
   enable_dns_hostnames = true
-  tags                 = { Name = var.stage }
+  tags                 = { Name = "vpc-${var.stage}" }
 }
 
 resource "aws_internet_gateway" "this" {
   vpc_id = aws_vpc.this.id
+  tags   = { Name = "igw-${var.stage}" }
 }
 
 resource "aws_subnet" "this" {
@@ -43,6 +48,7 @@ resource "aws_subnet" "this" {
   cidr_block              = var.cidr
   availability_zone       = data.aws_availability_zones.this.names[0]
   map_public_ip_on_launch = true
+  tags                    = { Name = "subnet-${var.stage}" }
 }
 
 resource "aws_route_table" "this" {
@@ -51,6 +57,7 @@ resource "aws_route_table" "this" {
     cidr_block = "0.0.0.0/0"
     gateway_id = aws_internet_gateway.this.id
   }
+  tags = { Name = "rtb-${var.stage}" }
 }
 
 resource "aws_route_table_association" "this" {
@@ -59,8 +66,9 @@ resource "aws_route_table_association" "this" {
 }
 
 resource "aws_security_group" "this" {
-  name   = var.stage
+  name   = "sg-${var.stage}"
   vpc_id = aws_vpc.this.id
+  tags   = { Name = "sg-${var.stage}" }
   ingress {
     description = "intra-cluster"
     from_port   = 0
@@ -96,7 +104,7 @@ module "nodes" {
 }
 
 resource "aws_key_pair" "this" {
-  key_name   = var.stage
+  key_name   = "kp-${var.stage}"
   public_key = file(pathexpand(var.ssh_public_key_file))
 }
 
@@ -109,6 +117,7 @@ resource "aws_instance" "node" {
   vpc_security_group_ids = [aws_security_group.this.id]
   root_block_device {
     volume_size = each.value.disk_size
+    tags        = { Name = "vol-${var.stage}-${each.key}" }
   }
   tags = { Name = "${var.stage}-${each.key}" }
 }

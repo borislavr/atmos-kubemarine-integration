@@ -14,23 +14,28 @@ data "openstack_networking_network_v2" "external" {
 
 locals {
   admin_cidrs = compact([var.admin_cidr, var.ci_cidr])
+  # cost allocation: Neutron/Nova tags are plain strings (key=value by convention); the VM also gets it as metadata
+  tags = ["cost-usage=${var.stage}"]
 }
 
 # --- network ---
 
 resource "openstack_networking_network_v2" "this" {
-  name = var.stage
+  name = "net-${var.stage}"
+  tags = local.tags
 }
 
 resource "openstack_networking_subnet_v2" "this" {
-  name            = var.stage
+  name            = "snet-${var.stage}"
+  tags            = local.tags
   network_id      = openstack_networking_network_v2.this.id
   cidr            = var.cidr
   dns_nameservers = var.dns_nameservers
 }
 
 resource "openstack_networking_router_v2" "this" {
-  name                = var.stage
+  name                = "rtr-${var.stage}"
+  tags                = local.tags
   external_network_id = data.openstack_networking_network_v2.external.id
 }
 
@@ -40,7 +45,8 @@ resource "openstack_networking_router_interface_v2" "this" {
 }
 
 resource "openstack_networking_secgroup_v2" "this" {
-  name = var.stage
+  name = "sg-${var.stage}"
+  tags = local.tags
 }
 
 resource "openstack_networking_secgroup_rule_v2" "internal" {
@@ -73,13 +79,14 @@ module "nodes" {
 }
 
 resource "openstack_compute_keypair_v2" "this" {
-  name       = var.stage
+  name       = "kp-${var.stage}"
   public_key = file(pathexpand(var.ssh_public_key_file))
 }
 
 resource "openstack_networking_port_v2" "node" {
   for_each           = module.nodes.nodes
-  name               = "${var.stage}-${each.key}"
+  name               = "port-${var.stage}-${each.key}"
+  tags               = local.tags
   network_id         = openstack_networking_network_v2.this.id
   security_group_ids = [openstack_networking_secgroup_v2.this.id]
   fixed_ip {
@@ -90,6 +97,8 @@ resource "openstack_networking_port_v2" "node" {
 resource "openstack_compute_instance_v2" "node" {
   for_each    = module.nodes.nodes
   name        = "${var.stage}-${each.key}"
+  tags        = local.tags
+  metadata    = { "cost-usage" = var.stage }
   image_name  = var.image
   flavor_name = each.value.size # disk size comes from the flavor; node type disk_size is ignored here
   key_pair    = openstack_compute_keypair_v2.this.name
@@ -101,6 +110,7 @@ resource "openstack_compute_instance_v2" "node" {
 resource "openstack_networking_floatingip_v2" "node" {
   for_each = module.nodes.nodes
   pool     = var.external_network
+  tags     = local.tags
 }
 
 resource "openstack_networking_floatingip_associate_v2" "node" {
