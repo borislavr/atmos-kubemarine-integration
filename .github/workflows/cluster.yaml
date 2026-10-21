@@ -1,6 +1,12 @@
 # Manual cluster operations: cloud resources (atmos terraform), Kubernetes (atmos kubemarine), apps (atmos helmfile).
 # Secrets and how to get them: .github/workflows/README.md
 name: cluster
+# e.g. "kubemarine test-azure: add_node --nodes worker-3 (dry run) by @user", "deploy test-azure [kafka] by @user"
+run-name: >-
+  ${{ inputs.action }} ${{ inputs.stack }}${{
+  inputs.action == 'kubemarine' && format(': {0}', inputs.kubemarine) || '' }}${{
+  (inputs.action == 'deploy' || inputs.action == 'apps') && format(' [{0}]', inputs.apps) || '' }}${{
+  inputs.dry_run && ' (dry run)' || '' }} by @${{ github.actor }}
 
 on:
   workflow_dispatch:
@@ -61,6 +67,21 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
+      - name: Inputs
+        env:
+          INPUTS: ${{ toJSON(inputs) }} # via env, not inlined into the script: inputs are free text
+        run: |
+          jq -r 'to_entries[] | "\(.key) = \(.value)"' <<<"$INPUTS"
+          {
+            echo "## Inputs"
+            echo
+            echo "| input | value |"
+            echo "|---|---|"
+            jq -r 'to_entries[] | "| \(.key) | \(if .value == "" then "—" else "`\(.value | tostring | gsub("\\|"; "\\|"))`" end) |"' <<<"$INPUTS"
+            echo
+            echo "by @$GITHUB_ACTOR, \`$GITHUB_REF_NAME\` @ \`${GITHUB_SHA::7}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Check inputs
