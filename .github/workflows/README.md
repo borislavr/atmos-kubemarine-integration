@@ -70,7 +70,7 @@ kubeconfig в CI не хранится: `apps` получает его кома�
 
 Рекомендуемый способ входа в облака — **OIDC**: GitHub выдаёт workflow короткоживущий токен, облако обменивает его на
 временные креды; долгоживущих ключей в секретах нет. Доверие ограничено репозиторием и веткой
-(`repo:borislavr/atmos-kubemarine-integration:ref:refs/heads/main`) — запуск workflow с другой ветки
+(`repo:borislavr@19729448/atmos-kubemarine-integration@1426618043:ref:refs/heads/main`) — запуск workflow с другой ветки
 потребует ещё одного федеративного удостоверения / условия. Статические ключи поддерживаются как запасной вариант.
 
 ### Azure
@@ -96,7 +96,7 @@ az ad sp create --id "$APP_ID"
 az ad app federated-credential create --id "$APP_ID" --parameters '{
   "name": "github-main",
   "issuer": "https://token.actions.githubusercontent.com",
-  "subject": "repo:borislavr/atmos-kubemarine-integration:ref:refs/heads/main",
+  "subject": "repo:borislavr@19729448/atmos-kubemarine-integration@1426618043:ref:refs/heads/main",
   "audiences": ["api://AzureADTokenExchange"]
 }'
 
@@ -138,7 +138,7 @@ cat > trust.json <<EOF
     "Condition": {
       "StringEquals": {
         "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-        "token.actions.githubusercontent.com:sub": "repo:borislavr/atmos-kubemarine-integration:ref:refs/heads/main"
+        "token.actions.githubusercontent.com:sub": "repo:borislavr@19729448/atmos-kubemarine-integration@1426618043:ref:refs/heads/main"
       }
     }
   }]
