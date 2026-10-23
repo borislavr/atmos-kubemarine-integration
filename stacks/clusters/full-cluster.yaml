@@ -20,6 +20,7 @@ import:
   - catalog/node-types
   - catalog/kubemarine
   - catalog/kafka/medium
+  - catalog/monitoring
 
 vars:
   stage: full-cluster
@@ -31,7 +32,8 @@ components:
         admin_cidr: 72.56.49.160/28 # who may reach SSH and the Kubernetes API
         node_types:
           # extra type for the example's labelled workers; balancer/control-plane/worker come from catalog/node-types.yaml
-          infra-worker: { roles: [worker], size: large, labels: { netcracker-infra: infra } }
+          # disk: local-path volumes of kafka brokers (2 per node, see kafka storage below) + monitoring
+          infra-worker: { roles: [worker], size: large, disk_size: 256, labels: { netcracker-infra: infra } }
         nodes:
           lb-1:            { type: balancer }
           lb-2:            { type: balancer }
@@ -108,7 +110,7 @@ components:
                 warn: restricted
                 warn-version: latest
               exemptions:
-                namespaces: [kube-system]
+                namespaces: [kube-system, monitoring] # monitoring: node-exporter needs host network/PID/paths
 
           plugins:
             calico:
@@ -121,3 +123,28 @@ components:
             kubernetes-dashboard:
               install: true
               hostname: dashboard.full-cluster.k8s.local
+
+  helmfile:
+    kafka:
+      vars:
+        values:
+          global:
+            installDashboard: true # GrafanaDashboard CRD comes with catalog/monitoring
+          kafka:
+            # Brokers are pinned to the infra workers (worker-1 is tainted) and get the `region` label of their node as
+            # rack: rack-aware replica placement keeps a copy of each partition in both regions.
+            # Lists are per broker (kafka-1, kafka-2, kafka-3), lengths = replicas.
+            storage:
+              size: 100Gi # local-path does not enforce it: 2 brokers share the 256 GB disk of an infra-worker
+              nodes: [worker-2, worker-3, worker-2]
+            racks: [europe, asia, europe]
+            ccMetricReporterEnabled: true # metrics for Cruise Control
+        services_values:
+          global:
+            installDashboard: true
+          monitoring:
+            install: true # Kafka exporters, ServiceMonitors, alerts, dashboards (needs catalog/monitoring deployed first)
+          cruiseControl:
+            install: true # partition rebalancing; UI: kubectl -n kafka port-forward svc/kafka-cruise-control 9090:9090
+            envoyGateway:
+              enabled: false

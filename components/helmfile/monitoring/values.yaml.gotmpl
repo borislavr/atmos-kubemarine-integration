@@ -1,0 +1,8 @@
+{{- /* Chart values = stack var `values` (deep-merged by atmos) + Grafana admin credentials. */ -}}
+{{- $c := .Values.credentials }}
+{{- /* `ref+...` references are resolved by helmfile (vals): env vars, cloud secret managers, Vault, ... */}}
+{{- $secrets := dict "grafana" (dict "security" (dict
+  "admin_user" $c.grafana_admin_username
+  "admin_password" ($c.grafana_admin_password | fetchSecretValue)
+)) }}
+{{- mergeOverwrite (deepCopy .Values.values) $secrets | toYaml }}

@@ -1,0 +1,26 @@
+# qubership-monitoring-operator, cluster- and provider-agnostic (component: components/helmfile/monitoring).
+# Usage: add `- catalog/monitoring` to the imports of clusters/<cluster>.yaml and deploy it before the apps (apps: "monitoring kafka").
+components:
+  helmfile:
+    monitoring:
+      env:
+        # helmfile clones the chart's git repo: on Windows its paths exceed 260 chars (git `core.longpaths`, no-op elsewhere)
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: core.longpaths
+        GIT_CONFIG_VALUE_0: "true"
+      vars:
+        version: v0.88.1 # git tag of qubership-monitoring-operator
+        release_name: monitoring
+        namespace: monitoring
+
+        # Not secrets: `ref+` references resolved by helmfile (vals) at deploy time, see catalog/kafka/defaults.yaml
+        credentials:
+          grafana_admin_username: admin
+          grafana_admin_password: ref+envsubst://$GRAFANA_ADMIN_PASSWORD
+
+        # Chart values (https://github.com/Netcracker/qubership-monitoring-operator/tree/main/docs/installation).
+        # Default stack: VictoriaMetrics (vmsingle, vmagent, vmalert), Grafana, kube-state-metrics, node-exporter.
+        # Open Grafana: kubectl -n monitoring port-forward svc/grafana-service 3000:3000 -> http://localhost:3000
+        values:
+          global:
+            profile: small # HWE profile of the monitoring components: small | medium | large

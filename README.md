@@ -10,11 +10,13 @@ components/terraform/
   aws | gcp | azure | openstack     # сеть + firewall + VM; единый выход `nodes` (name, address, internal_address, roles, labels, taints)
   modules/nodes                     # общая модель нод: типы, классы размеров, переопределения
 components/helmfile/
-  kafka                             # qubership-kafka (helmfile), все настройки — из стека
+  kafka                             # qubership-kafka (helmfile): брокеры + сервисы (AKHQ, ...), все настройки — из стека
+  monitoring                        # qubership-monitoring-operator: VictoriaMetrics, Grafana, exporters, CRD мониторинга
 stacks/
   catalog/kubemarine.yaml           # общий cluster.yaml (nodes = !terraform.output infra nodes)
   catalog/node-types.yaml           # базовые типы нод: balancer / control-plane / worker (размер — класс)
   catalog/kafka/                    # qubership-kafka: defaults + профили small / medium / large / xlarge
+  catalog/monitoring.yaml           # qubership-monitoring-operator: версия, пароль Grafana, values
   clusters/<cluster>.yaml           # КЛАСТЕР, без провайдера: ноды, admin_cidr, cluster.yaml kubemarine
   providers/<cloud>/_defaults.yaml  # ПРОВАЙДЕР: state backend, env (подписка/профиль), регион, классы размеров -> VM
   providers/<cloud>/<cluster>.yaml  # РАЗМЕЩЕНИЕ = стек `<cluster>-<cloud>`: import двух файлов выше + правки под это облако
@@ -420,6 +422,39 @@ atmos helmfile destroy kafka -s test-azure
 
 Новое приложение делается так же: `components/helmfile/<app>/helmfile.yaml.gotmpl` (+ `values.yaml.gotmpl`,
 которому atmos передаёт `vars` как `.Values`) и `stacks/catalog/<app>/` с defaults и профилями.
+
+### Мониторинг и расширенная Kafka (full-cluster)
+
+Компонент [`monitoring`](components/helmfile/monitoring/helmfile.yaml.gotmpl) ставит
+[qubership-monitoring-operator](https://github.com/Netcracker/qubership-monitoring-operator) (чарт из git-тега,
+`version` в [`catalog/monitoring.yaml`](stacks/catalog/monitoring.yaml)): VictoriaMetrics, Grafana, kube-state-metrics,
+node-exporter и CRD `ServiceMonitor` / `PrometheusRule` / `GrafanaDashboard`, без которых мониторинг Kafka не ставится.
+Подключается импортом `catalog/monitoring` в кластер и ставится **до** приложений:
+```sh
+export GRAFANA_ADMIN_PASSWORD=... KAFKA_ADMIN_PASSWORD=... KAFKA_CLIENT_PASSWORD=...
+atmos helmfile apply monitoring -s full-cluster-aws
+atmos helmfile apply kafka      -s full-cluster-aws
+```
+В CI — `apps: "monitoring kafka"`, секрет `GRAFANA_ADMIN_PASSWORD`.
+
+[`clusters/full-cluster.yaml`](stacks/clusters/full-cluster.yaml) поверх профиля `medium` включает:
+- **rack-awareness**: брокеры закреплены за `worker-2` / `worker-3` (`storage.nodes`), rack каждого брокера = метка
+  `region` его ноды (`racks: [europe, asia, europe]`), реплики партиций раскладываются по обоим регионам.
+  Списки — по брокеру, длина = `replicas`; при изменении нод или `replicas` их нужно править вместе.
+- **Cruise Control** (`services_values.cruiseControl`) — ребалансировка партиций; метрики брокеров —
+  `kafka.ccMetricReporterEnabled`. Число брокеров и размер диска для него шаблон берёт из values брокеров.
+- **мониторинг Kafka** (`services_values.monitoring.install`, дашборды `installDashboard`).
+- **диск** `infra-worker` 256 GB: два брокера по 100Gi (`local-path` размер не ограничивает — следите сами).
+- PSS-исключение для namespace `monitoring` (node-exporter работает с сетью и файлами хоста).
+
+Веб-интерфейсы (логин Grafana — `admin` / `$GRAFANA_ADMIN_PASSWORD`, остальные — admin-учётка Kafka):
+```sh
+kubectl -n monitoring port-forward svc/grafana-service 3000:3000        # Grafana
+kubectl -n kafka port-forward svc/akhq 8080:8080                         # AKHQ
+kubectl -n kafka port-forward svc/kafka-cruise-control 9090:9090         # Cruise Control
+```
+ZooKeeper не нужен: Kafka 4 работает только в KRaft. Внешний доступ клиентов к брокерам (`kafka.createExternalServices`)
+не включён: для него нужны адреса на каждый брокер и открытые порты в firewall.
 
 ## 8. GitHub Actions
 

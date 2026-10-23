@@ -1,0 +1,17 @@
+# qubership-monitoring-operator: VictoriaMetrics, Grafana (grafana-operator), kube-state-metrics, node-exporter, dashboards,
+# https://github.com/Netcracker/qubership-monitoring-operator. All settings come from the atmos stack: see stacks/catalog/monitoring.yaml.
+# Brings the ServiceMonitor / PrometheusRule / GrafanaDashboard CRDs that application monitoring (e.g. kafka) needs: deploy it first.
+# Cluster access: KUBECONFIG from the stack `env` (catalog/kubemarine.yaml).
+
+releases:
+  - name: {{ .Values.release_name }}
+    namespace: {{ .Values.namespace }}
+    createNamespace: true
+    # not published to a helm repository: chart from the git tag; CRDs come with its subcharts
+    # (the separate qubership-monitoring-crds chart is too large for a helm release secret)
+    chart: git::https://github.com/Netcracker/qubership-monitoring-operator.git@charts/qubership-monitoring-operator?ref={{ .Values.version }}
+    disableValidationOnInstall: true # first install: GrafanaDashboard etc. CRDs are not in the cluster yet
+    wait: true
+    timeout: 900
+    values:
+      - values.yaml.gotmpl

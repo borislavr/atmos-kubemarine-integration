@@ -22,6 +22,7 @@ gh workflow run cluster.yaml -f stack=test-azure -f action=deploy -f dry_run=tru
 gh workflow run cluster.yaml -f stack=test-azure -f action=deploy
 gh workflow run cluster.yaml -f stack=test-azure -f action=kubemarine -f kubemarine="add_node --nodes worker-3"
 gh workflow run cluster.yaml -f stack=test-azure -f action=apps -f apps=kafka
+gh workflow run cluster.yaml -f stack=full-cluster-aws -f action=deploy -f apps="monitoring kafka"   # порядок важен: CRD мониторинга нужны kafka
 gh workflow run cluster.yaml -f stack=test-azure -f action=destroy -f confirm=test-azure
 gh run watch
 ```
@@ -66,7 +67,8 @@ kubeconfig в CI не хранится: `apps` получает его кома�
 | Секрет | Зачем | Как получить |
 |---|---|---|
 | `SSH_PRIVATE_KEY` | доступ terraform/kubemarine к нодам | **тот же ключ**, чей публичный ключ уже лежит на VM (по умолчанию `~/.ssh/id_ed25519`), без пароля: `gh secret set SSH_PRIVATE_KEY < ~/.ssh/id_ed25519`. Для отдельного CI-ключа: `ssh-keygen -t ed25519 -N "" -f ci_key` и используйте его и локально, иначе VM, созданные из CI и локально, будут с разными ключами |
-| `KAFKA_ADMIN_PASSWORD`, `KAFKA_CLIENT_PASSWORD` | пароли qubership-kafka (`ref+envsubst://...` в `stacks/catalog/kafka/defaults.yaml`) | придумать: `openssl rand -base64 24 \| gh secret set KAFKA_ADMIN_PASSWORD` |
+| `KAFKA_ADMIN_PASSWORD`, `KAFKA_CLIENT_PASSWORD` | пароли qubership-kafka (`ref+envsubst://...` в `stacks/catalog/kafka/defaults.yaml`); admin — также логин в AKHQ и Cruise Control | придумать: `openssl rand -base64 24 \| gh secret set KAFKA_ADMIN_PASSWORD` |
+| `GRAFANA_ADMIN_PASSWORD` | пароль `admin` в Grafana компонента `monitoring` (`stacks/catalog/monitoring.yaml`); нужен, только если ставите `monitoring` | придумать: `openssl rand -base64 24 \| gh secret set GRAFANA_ADMIN_PASSWORD` |
 
 Рекомендуемый способ входа в облака — **OIDC**: GitHub выдаёт workflow короткоживущий токен, облако обменивает его на
 временные креды; долгоживущих ключей в секретах нет. Доверие ограничено репозиторием и веткой

@@ -60,6 +60,7 @@ env:
   # app secrets, referenced from stacks as ref+envsubst://$NAME
   KAFKA_ADMIN_PASSWORD: ${{ secrets.KAFKA_ADMIN_PASSWORD }}
   KAFKA_CLIENT_PASSWORD: ${{ secrets.KAFKA_CLIENT_PASSWORD }}
+  GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
 
 jobs:
   cluster:
@@ -243,6 +244,9 @@ jobs:
           for app in $APPS; do
             if [ "$app" = kafka ] && { [ -z "$KAFKA_ADMIN_PASSWORD" ] || [ -z "$KAFKA_CLIENT_PASSWORD" ]; }; then
               echo "::error::kafka needs secrets KAFKA_ADMIN_PASSWORD and KAFKA_CLIENT_PASSWORD"; exit 1
+            fi
+            if [ "$app" = monitoring ] && [ -z "$GRAFANA_ADMIN_PASSWORD" ]; then
+              echo "::error::monitoring needs secret GRAFANA_ADMIN_PASSWORD"; exit 1
             fi
             if [ "$DRY_RUN" = true ]; then
               # rendered offline, no cluster access; only the resource list is printed (manifests contain secrets)

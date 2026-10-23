@@ -1,11 +1,18 @@
-{{- /* kafka-service chart values = stack var `services_values` + credentials. AKHQ login = Kafka admin credentials. */ -}}
+{{- /* kafka-service chart values = stack var `services_values` + credentials. AKHQ / Cruise Control UI login = Kafka admin credentials. */ -}}
 {{- $c := .Values.credentials }}
+{{- $admin := dict "username" $c.admin_username "password" ($c.admin_password | fetchSecretValue) }}
 {{- $secrets := dict "global" (dict "secrets" (dict
   "kafka" (dict
     "clientUsername" $c.client_username
     "clientPassword" ($c.client_password | fetchSecretValue))
   "akhq" (dict
-    "defaultUsername" $c.admin_username
-    "defaultPassword" ($c.admin_password | fetchSecretValue))
+    "defaultUsername" $admin.username
+    "defaultPassword" $admin.password)
+  "cruiseControl" (dict
+    "adminUsername" $admin.username
+    "adminPassword" $admin.password)
 )) }}
-{{- mergeOverwrite (deepCopy .Values.services_values) $secrets | toYaml }}
+{{- /* the chart describes the brokers it connects to (Cruise Control: replication factor, disk capacity): take them from the broker values */}}
+{{- $brokers := .Values.values.kafka }}
+{{- $kafka := dict "kafka" (dict "replicas" $brokers.replicas "storage" (dict "size" $brokers.storage.size)) }}
+{{- mergeOverwrite (deepCopy .Values.services_values) $kafka $secrets | toYaml }}
