@@ -1,0 +1,4 @@
+# Cluster `full-cluster` in GCP (stack full-cluster-gcp).
+import:
+  - providers/gcp/_defaults
+  - clusters/full-cluster

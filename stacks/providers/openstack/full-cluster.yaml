@@ -1,0 +1,4 @@
+# Cluster `full-cluster` in OpenStack (stack full-cluster-openstack).
+import:
+  - providers/openstack/_defaults
+  - clusters/full-cluster

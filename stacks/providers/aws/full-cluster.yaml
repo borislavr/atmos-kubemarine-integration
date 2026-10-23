@@ -1,0 +1,4 @@
+# Cluster `full-cluster` in AWS (stack full-cluster-aws).
+import:
+  - providers/aws/_defaults
+  - clusters/full-cluster
