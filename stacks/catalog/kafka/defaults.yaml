@@ -28,3 +28,15 @@ components:
               enabled: true # Kafka 4.x, no ZooKeeper
             storage:
               className: [local-path] # local disks: kubemarine plugin local-path-provisioner (catalog/kubemarine.yaml)
+
+        # kafka-service chart values (release <release_name>-services): only the AKHQ web UI.
+        # Open it: kubectl -n kafka port-forward svc/akhq 8080:8080 -> http://localhost:8080 (login: admin credentials)
+        services_values:
+          global:
+            installDashboard: false # needs GrafanaDashboard CRD (monitoring operator)
+          monitoring:
+            install: false # needs ServiceMonitor/PrometheusRule CRDs (prometheus operator)
+          akhq:
+            install: true
+            envoyGateway:
+              enabled: false # no Gateway API in kubemarine clusters; for an ingress set akhq.ingress.host (+ className: nginx)

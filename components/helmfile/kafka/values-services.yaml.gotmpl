@@ -1,0 +1,11 @@
+{{- /* kafka-service chart values = stack var `services_values` + credentials. AKHQ login = Kafka admin credentials. */ -}}
+{{- $c := .Values.credentials }}
+{{- $secrets := dict "global" (dict "secrets" (dict
+  "kafka" (dict
+    "clientUsername" $c.client_username
+    "clientPassword" ($c.client_password | fetchSecretValue))
+  "akhq" (dict
+    "defaultUsername" $c.admin_username
+    "defaultPassword" ($c.admin_password | fetchSecretValue))
+)) }}
+{{- mergeOverwrite (deepCopy .Values.services_values) $secrets | toYaml }}

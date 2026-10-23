@@ -14,3 +14,14 @@ releases:
     timeout: 900
     values:
       - values.yaml.gotmpl
+
+  # qubership-kafka supplementary services: AKHQ web UI (what else is enabled: `services_values` in the stack)
+  - name: {{ .Values.release_name }}-services
+    namespace: {{ .Values.namespace }}
+    chart: https://github.com/Netcracker/qubership-kafka/releases/download/{{ .Values.chart_version }}/kafka-service-{{ .Values.chart_version }}.tgz
+    needs: [{{ .Values.namespace }}/{{ .Values.release_name }}] # connects to the brokers: <global.name>:9092
+    disableValidationOnInstall: true # KafkaService CRD comes with the chart
+    wait: true
+    timeout: 600
+    values:
+      - values-services.yaml.gotmpl

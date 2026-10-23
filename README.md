@@ -409,6 +409,14 @@ atmos helmfile destroy kafka -s test-azure
             admin_password: ref+azurekeyvault://my-vault/kafka-admin-password   # aws: ref+awssecrets://..., gcp: ref+gcpsecrets://...
   ```
 - **версия**: `chart_version` в `catalog/kafka/defaults.yaml`; чарты берутся из GitHub-релизов qubership-kafka.
+- **веб-интерфейс AKHQ**: второй релиз компонента, `kafka-services` (чарт `kafka-service`), ставится той же командой
+  `atmos helmfile apply kafka` после брокеров. Его values — переменная `services_values`; по умолчанию включён
+  только AKHQ (monitoring, backup daemon, Cruise Control, Mirror Maker выключены). Логин — `credentials.admin_*`.
+  Открыть (нужен доступ к Kubernetes API, см. `admin_cidr`):
+  ```sh
+  export KUBECONFIG=.kubemarine/test-azure/kubeconfig     # нет файла? atmos kubeconfig -s test-azure
+  kubectl -n kafka port-forward svc/akhq 8080:8080         # -> http://localhost:8080
+  ```
 
 Новое приложение делается так же: `components/helmfile/<app>/helmfile.yaml.gotmpl` (+ `values.yaml.gotmpl`,
 которому atmos передаёт `vars` как `.Values`) и `stacks/catalog/<app>/` с defaults и профилями.

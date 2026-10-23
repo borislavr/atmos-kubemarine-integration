@@ -65,7 +65,7 @@ flowchart LR
 | **kubemarine** (abstract, без папки) | `vars.cluster` | база + full-cluster: cluster_name `full-cluster.k8s.local`, services, rbac, plugins (calico mode vxlan + typha/apiserver из кластера) | catalog/kubemarine ⊕ clusters/full-cluster |
 | | `vars.cluster.nodes` | `!terraform.output infra nodes`: 8 записей из state | S3 state компонента infra |
 | | `vars.procedures` | `{}`: procedure.yaml не пишется | catalog/kubemarine |
-| **kafka** (`components/helmfile/kafka`) | `vars` | chart 2.8.4, release `kafka`, ns `kafka`, credentials, values (defaults ⊕ medium), stage | catalog/kafka/defaults ⊕ medium |
+| **kafka** (`components/helmfile/kafka`) | `vars` | chart 2.8.4, release `kafka`, ns `kafka`, credentials, values (defaults ⊕ medium), services_values (AKHQ), stage | catalog/kafka/defaults ⊕ medium |
 | | `env.KUBECONFIG` | `../../../.kubemarine/full-cluster-aws/kubeconfig` (от папки компонента) | catalog/kubemarine (шаблон `<% .atmos_stack %>`) |
 | | секреты | `$KAFKA_ADMIN_PASSWORD`, `$KAFKA_CLIENT_PASSWORD` | GitHub secrets → `env:` workflow |
 
@@ -125,7 +125,7 @@ flowchart TB
   F --> KC[".kubemarine/full-cluster-aws/<br/>kubeconfig, dump/, kubemarine.log"]
   KC -.->|"env KUBECONFIG"| G
   KFC[("компонент kafka vars<br/>+ KAFKA_*_PASSWORD")] -.-> G
-  G --> K8S["ns kafka: operator + 3 брокера KRaft"]
+  G --> K8S["ns kafka: operator + 3 брокера KRaft<br/>+ kafka-services: AKHQ"]
 ```
 
 ### action = apps
@@ -246,7 +246,12 @@ flowchart LR
 5. [`values.yaml.gotmpl`](../components/helmfile/kafka/values.yaml.gotmpl): `.Values.values` ⊕ `global.secrets.kafka`;
    пароли резолвит `fetchSecretValue` (vals) из `ref+envsubst://$KAFKA_*_PASSWORD`.
 
-Итоговые values: `global.monitoringType: prometheus`, `kafka.kraft.enabled`, `replicas: 3`, `heapSize: 2048`, 1–2 CPU / 8Gi,
+6. Вторым релизом (`needs` на `kafka`) ставится `kafka-services` из чарта `kafka-service-2.8.4.tgz`: values из
+   `vars.services_values` + [`values-services.yaml.gotmpl`](../components/helmfile/kafka/values-services.yaml.gotmpl)
+   (client-учётка для подключения к `kafka:9092`, admin-учётка как логин AKHQ). Включён только веб-интерфейс AKHQ:
+   `kubectl -n kafka port-forward svc/akhq 8080:8080`.
+
+Итоговые values брокеров: `global.monitoringType: prometheus`, `kafka.kraft.enabled`, `replicas: 3`, `heapSize: 2048`, 1–2 CPU / 8Gi,
 `storage.className: [local-path]`, `size: 500Gi`, operator 100–200m / 128–256Mi.
 
 Перед запуском workflow проверяет, что оба секрета Kafka не пустые.
