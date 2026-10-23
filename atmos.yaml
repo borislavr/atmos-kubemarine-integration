@@ -32,6 +32,26 @@ ci:
   summary:
     enabled: true
 
+# Atmos MCP server (`atmos mcp start`) for AI agents, see agent-packages/atmos-kubemarine-ops.
+# ai.enabled is required by the server; no AI provider is configured or needed. Only the listed tools are registered:
+# read/validate/provenance plus stack value edits - no shell, no file writes, no atmos.yaml edits.
+mcp:
+  enabled: true
+ai:
+  enabled: true
+  tools:
+    allowed:
+      - atmos_list_stacks
+      - atmos_list_components
+      - atmos_list_values
+      - atmos_describe_component
+      - atmos_describe_dependents
+      - atmos_validate_stacks
+      - atmos_stack_config_get
+      - atmos_stack_config_list
+      - atmos_stack_config_set
+      - describe_affected
+
 commands:
   # cluster.yaml is rendered from the `kubemarine` component of the stack (nodes come from `infra` outputs);
   # kubemarine runs locally in .kubemarine/<stack>/ (cluster.yaml, procedure.yaml, kubeconfig, dump/, reports)

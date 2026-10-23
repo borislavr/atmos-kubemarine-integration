@@ -21,6 +21,7 @@ stacks/
   providers/<cloud>/_defaults.yaml  # ПРОВАЙДЕР: state backend, env (подписка/профиль), регион, классы размеров -> VM
   providers/<cloud>/<cluster>.yaml  # РАЗМЕЩЕНИЕ = стек `<cluster>-<cloud>`: import двух файлов выше + правки под это облако
   workflows/cluster.yaml            # deploy / destroy
+agent-packages/atmos-kubemarine-ops # APM-пакет: скилл для AI-агентов (скейл, приложения, конфиг, версии) + MCP atmos
 .kubemarine/<stack>/                # рабочая папка kubemarine: cluster.yaml, procedure.yaml, kubeconfig, dump/, отчёты (не в git)
 ```
 

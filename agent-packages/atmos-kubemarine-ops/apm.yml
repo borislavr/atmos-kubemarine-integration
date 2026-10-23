@@ -1,0 +1,16 @@
+name: atmos-kubemarine-ops
+version: 0.1.0
+description: Operate an atmos + kubemarine + helmfile cluster repository with an AI agent - scale nodes, add and configure helmfile apps, upgrade versions - editing the right stack layer and verifying every change with atmos.
+author: Boris Lavrishchev
+type: skill
+
+dependencies:
+  mcp:
+    # Atmos MCP server (stack/component introspection with provenance, validation, stack edits).
+    # Needs `mcp.enabled: true` and `ai.enabled: true` in the consumer's atmos.yaml; tools are limited by `ai.tools.allowed`.
+    # Started in the project root, where atmos.yaml lives.
+    - name: atmos
+      registry: false
+      transport: stdio
+      command: atmos
+      args: [mcp, start]
