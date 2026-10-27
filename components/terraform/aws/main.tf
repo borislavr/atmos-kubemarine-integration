@@ -105,15 +105,18 @@ module "nodes" {
 
 resource "aws_key_pair" "this" {
   key_name   = "kp-${var.stage}"
-  public_key = file(pathexpand(var.ssh_public_key_file))
+  public_key = var.ssh_public_key
 }
 
 resource "aws_instance" "node" {
-  for_each               = module.nodes.nodes
-  ami                    = data.aws_ami.ubuntu.id
-  instance_type          = each.value.size
-  subnet_id              = aws_subnet.this.id
-  key_name               = aws_key_pair.this.key_name
+  for_each      = module.nodes.nodes
+  ami           = data.aws_ami.ubuntu.id
+  instance_type = each.value.size
+  subnet_id     = aws_subnet.this.id
+  # by name, not reference: a rotated key replaces the key pair, which must not replace the VMs (atmos sshkey rotate
+  # puts the new key on running nodes); VMs created later get the new key
+  key_name               = "kp-${var.stage}"
+  depends_on             = [aws_key_pair.this]
   vpc_security_group_ids = [aws_security_group.this.id]
   root_block_device {
     volume_size = each.value.disk_size

@@ -10,12 +10,20 @@ terraform:
     gcs:
       bucket: my-tfstate-gcp # atmos adds prefix=<component>, workspace = stack
 
+# Per-cluster SSH key of the `ubuntu` user (atmos sshkey ensure|rotate): stored in the secret store per stack,
+# never in git or terraform state. kubemarine gets the private key as a temp file for the duration of a run.
+secrets:
+  vars:
+    SSH_PRIVATE_KEY: { store: ssh-keys-gcp, required: true, description: "SSH private key of the cluster nodes" }
+    SSH_PUBLIC_KEY:  { store: ssh-keys-gcp, required: true, description: "SSH public key put on new VMs" }
+
 components:
   terraform:
     infra:
       metadata:
         component: gcp
       vars:
+        ssh_public_key: !secret SSH_PUBLIC_KEY
         project: my-gcp-project
         region: europe-west3
         zone: europe-west3-a

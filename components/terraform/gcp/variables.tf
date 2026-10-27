@@ -24,4 +24,7 @@ variable "ci_cidr" {
 variable "admin_ports" { default = [22, 6443] }
 variable "cidr" { default = "10.10.0.0/24" }
 variable "image" { default = "ubuntu-os-cloud/ubuntu-2204-lts" }
-variable "ssh_public_key_file" { default = "~/.ssh/id_ed25519.pub" }
+variable "ssh_public_key" {
+  type        = string
+  description = "OpenSSH public key of the `ubuntu` user, from the stack secret SSH_PUBLIC_KEY (atmos sshkey ensure)"
+}

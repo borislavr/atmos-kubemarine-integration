@@ -2,6 +2,7 @@ workflows:
   deploy:
     description: Create/update cloud resources, then install Kubernetes with kubemarine
     steps:
+      - command: sshkey ensure # per-cluster SSH key in the secret store, before the VMs need it
       - command: terraform apply infra -auto-approve
       - command: kubemarine install
   destroy:

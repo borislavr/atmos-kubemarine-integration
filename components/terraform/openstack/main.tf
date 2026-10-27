@@ -80,7 +80,7 @@ module "nodes" {
 
 resource "openstack_compute_keypair_v2" "this" {
   name       = "kp-${var.stage}"
-  public_key = file(pathexpand(var.ssh_public_key_file))
+  public_key = var.ssh_public_key
 }
 
 resource "openstack_networking_port_v2" "node" {
@@ -101,7 +101,10 @@ resource "openstack_compute_instance_v2" "node" {
   metadata    = { "cost-usage" = var.stage }
   image_name  = var.image
   flavor_name = each.value.size # disk size comes from the flavor; node type disk_size is ignored here
-  key_pair    = openstack_compute_keypair_v2.this.name
+  # by name, not reference: a rotated key replaces the keypair, which must not replace the VMs (atmos sshkey rotate
+  # puts the new key on running nodes); VMs created later get the new key
+  key_pair   = "kp-${var.stage}"
+  depends_on = [openstack_compute_keypair_v2.this]
   network {
     port = openstack_networking_port_v2.node[each.key].id
   }

@@ -26,12 +26,20 @@ terraform:
       skip_s3_checksum: true
       use_lockfile: false # ponytail: no state locking; set true if the store supports conditional writes (If-None-Match)
 
+# Per-cluster SSH key of the `ubuntu` user (atmos sshkey ensure|rotate): stored in the secret store per stack,
+# never in git or terraform state. kubemarine gets the private key as a temp file for the duration of a run.
+secrets:
+  vars:
+    SSH_PRIVATE_KEY: { store: ssh-keys-openstack, required: true, description: "SSH private key of the cluster nodes" }
+    SSH_PUBLIC_KEY:  { store: ssh-keys-openstack, required: true, description: "SSH public key put on new VMs" }
+
 components:
   terraform:
     infra:
       metadata:
         component: openstack
       vars:
+        ssh_public_key: !secret SSH_PUBLIC_KEY
         external_network: public
         image: ubuntu-22.04
         # Size classes used by node types (catalog/node-types.yaml, clusters/*) -> VM sizes of this provider

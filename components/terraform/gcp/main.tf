@@ -65,7 +65,7 @@ resource "google_compute_instance" "node" {
   machine_type = each.value.size
   # resizing a node type stops/starts its VMs
   allow_stopping_for_update = true
-  metadata                  = { ssh-keys = "ubuntu:${file(pathexpand(var.ssh_public_key_file))}" }
+  metadata                  = { ssh-keys = "ubuntu:${var.ssh_public_key}" } # key rotation updates it in place
   boot_disk {
     initialize_params {
       image  = var.image

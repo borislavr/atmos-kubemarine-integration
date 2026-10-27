@@ -17,12 +17,20 @@ terraform:
       key: atmos # atmos appends /<component>.terraform.tfstate, workspace = stack
       use_azuread_auth: true
 
+# Per-cluster SSH key of the `ubuntu` user (atmos sshkey ensure|rotate): stored in the secret store per stack,
+# never in git or terraform state. kubemarine gets the private key as a temp file for the duration of a run.
+secrets:
+  vars:
+    SSH_PRIVATE_KEY: { store: ssh-keys-azure, required: true, description: "SSH private key of the cluster nodes" }
+    SSH_PUBLIC_KEY:  { store: ssh-keys-azure, required: true, description: "SSH public key put on new VMs" }
+
 components:
   terraform:
     infra:
       metadata:
         component: azure
       vars:
+        ssh_public_key: !secret SSH_PUBLIC_KEY
         region: northeurope # westeurope VM sizes are restricted for this subscription
         # Size classes used by node types (catalog/node-types.yaml, clusters/*) -> VM sizes of this provider
         sizes:

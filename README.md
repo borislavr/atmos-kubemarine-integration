@@ -45,7 +45,6 @@ agent-packages/atmos-kubemarine-ops # APM-пакет: скилл для AI-аг�
 | terraform ≥ 1.10 | ресурсы в облаке | https://developer.hashicorp.com/terraform/install |
 | kubemarine | установка k8s | бинарник из [релизов](https://github.com/Netcracker/KubeMarine/releases) (`kubemarine-win64.exe` / `-linux-x86_64` / `-macos14-*`) переименовать в `kubemarine` и положить в `PATH` (или `pip install kubemarine`) |
 | CLI облака | логин | `az`, `aws`, `gcloud`, `openstack` |
-| SSH-ключ | доступ к VM | `ssh-keygen -t ed25519` → `~/.ssh/id_ed25519` |
 | helm 3 + helmfile 1.x + helm-diff | приложения в кластере | [helm](https://github.com/helm/helm/releases), [helmfile](https://github.com/helmfile/helmfile/releases), `helm plugin install https://github.com/databus23/helm-diff` (на Windows без `pwsh` — положить `diff.exe` из релиза в `$(helm env HELM_PLUGINS)/helm-diff/bin/`) |
 
 На Windows запускайте команды из **Git Bash**: шагам `atmos kubemarine` нужен `mkdir`, а atmos и kubemarine должны быть в `PATH`.
@@ -65,8 +64,8 @@ Atmos передаёт terraform (и `!terraform.output`) переменные �
 | OpenStack | `~/.config/openstack/clouds.yaml` + пароль/app credential в `secure.yaml` | `OS_CLOUD` | заполнить `clouds.yaml` | `OS_AUTH_URL`, `OS_APPLICATION_CREDENTIAL_ID/SECRET`, ... |
 | OpenStack state (S3 API) | `~/.aws/credentials`, профиль `openstack-tfstate` (ключи из `openstack ec2 credentials create`) | `backend.s3.profile` | — | `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` |
 
-SSH: публичный ключ (`ssh_public_key_file`, по умолчанию `~/.ssh/id_ed25519.pub`) кладётся на VM,
-приватный (`cluster.node_defaults.keyfile`) использует kubemarine. В репозиторий ключи не попадают.
+SSH-ключи нод генерируются автоматически, свои на каждый кластер, и хранятся в секрет-менеджере облака — см.
+[SSH-ключ кластера](#ssh-ключ-кластера).
 
 Если кластеру нужна другая подписка/аккаунт — переопределите `env` в его размещении `providers/<cloud>/<cluster>.yaml`.
 
@@ -89,6 +88,12 @@ az role assignment create --assignee-object-id $(az ad signed-in-user show --que
 az storage container create -n tfstate --account-name <имя> --auth-mode login
 ```
 Роль применяется 1–5 минут (до этого terraform получает 403).
+
+Хранилище SSH-ключей кластеров (Key Vault, имя — `stores.ssh-keys-azure.options.vault_url` в `atmos.yaml`):
+```sh
+az keyvault create -n <уникальное_имя_kv> -g tfstate -l northeurope --enable-rbac-authorization true
+az role assignment create --assignee-object-id $(az ad signed-in-user show --query id -o tsv)   --assignee-principal-type User --role "Key Vault Secrets Officer"   --scope $(az keyvault show -n <имя_kv> --query id -o tsv)
+```
 Проверьте доступность размеров VM и квоту в регионе:
 `az vm list-skus -l <region> --size Standard_D2s_v5 --query "[].restrictions"`, `az vm list-usage -l <region> -o table`.
 
@@ -100,6 +105,8 @@ aws s3 mb s3://<bucket> --region eu-central-1 --profile my-profile
 aws s3api put-bucket-versioning --bucket <bucket> --versioning-configuration Status=Enabled --profile my-profile
 ```
 В `providers/aws/_defaults.yaml`: `env.AWS_PROFILE`, `backend.s3.bucket`, `region`.
+SSH-ключи кластеров — в Secrets Manager (`stores.ssh-keys-aws` в `atmos.yaml`, регион там же); нужны права
+`secretsmanager:CreateSecret/GetSecretValue/PutSecretValue` на `atmos/*`.
 
 ### GCP
 
@@ -110,6 +117,8 @@ gcloud storage buckets create gs://<bucket> --project <project> --location=europ
 gcloud storage buckets update gs://<bucket> --versioning
 ```
 В `providers/gcp/_defaults.yaml`: `backend.gcs.bucket`, `vars.project`, `region`, `zone`.
+SSH-ключи кластеров — в Secret Manager (`stores.ssh-keys-gcp.options.project_id` в `atmos.yaml`):
+`gcloud services enable secretmanager.googleapis.com --project <project>`, роль `roles/secretmanager.admin`.
 
 ### OpenStack
 
@@ -123,6 +132,8 @@ openstack image list | grep -i 22.04          # -> vars.image
 openstack flavor list                         # -> sizes (small/medium/large/xlarge)
 ```
 В `providers/openstack/_defaults.yaml`: `env.OS_CLOUD`, `backend.s3.endpoints.s3` (S3 endpoint объектного хранилища), `external_network`, `image`, `sizes` (flavor-ы).
+SSH-ключи кластеров — в HashiCorp Vault (KV v2; `stores.ssh-keys-openstack` в `atmos.yaml`, токен — `VAULT_TOKEN`):
+Barbican atmos не поддерживает.
 
 ## 4. Создание кластера
 
@@ -349,6 +360,30 @@ atmos terraform apply infra -s <stack>
 - версия k8s: `vars.procedures.upgrade.upgrade_plan: [v1.xx.y]` → `atmos kubemarine upgrade -s <stack>`;
 - плагины/параметры сервисов: `atmos kubemarine install -s <stack> -- --tasks <задачи>` или `reconfigure`
   (см. [Maintenance.md](https://github.com/Netcracker/KubeMarine/blob/main/docs/public/Maintenance.md)).
+
+### SSH-ключ кластера
+
+У каждого стека свой ключ пользователя `ubuntu`. Он генерируется автоматически и живёт только в секрет-менеджере облака
+(`SSH_PRIVATE_KEY` / `SSH_PUBLIC_KEY`, объявлены в `providers/<cloud>/_defaults.yaml`, хранилища — `stores` в `atmos.yaml`):
+не в git, не в terraform state, не в `~/.ssh`.
+
+- `atmos sshkey ensure -s <stack>` — создать ключ, если его нет (входит в `atmos workflow deploy`, в CI — шаг перед terraform).
+- terraform получает открытый ключ через `!secret SSH_PUBLIC_KEY` и кладёт его на **новые** VM.
+- `atmos kubemarine` / `atmos kubeconfig` на время запуска читают закрытый ключ во временную папку (права 700) и удаляют её
+  при выходе; в `cluster.yaml` попадает только путь. В CI ключ читается один раз в начале job (`CLUSTER_SSH_KEYFILE`).
+- `atmos sshkey rotate -s <stack>` — смена ключа на работающем кластере: новый ключ дописывается на все ноды текущим,
+  проверяется вход новым, хранилище переключается, старый ключ удаляется с нод. VM не пересоздаются
+  (у Azure — `ignore_changes = [admin_ssh_key]`, у AWS/OpenStack — key pair по имени).
+- Зайти на ноду руками: `atmos secret get SSH_PRIVATE_KEY -s <stack> -c infra --mask=false --raw > key && chmod 600 key`
+  (и удалить файл после).
+
+Перевод кластера, созданного со своим ключом (`~/.ssh/id_ed25519`), на эту схему: положить свой ключ в хранилище
+и сразу заменить его сгенерированным:
+```sh
+atmos secret set SSH_PRIVATE_KEY --stdin -s <stack> -c infra < ~/.ssh/id_ed25519
+atmos secret set "SSH_PUBLIC_KEY=$(cat ~/.ssh/id_ed25519.pub)" -s <stack> -c infra
+atmos sshkey rotate -s <stack>
+```
 
 ### Удалить кластер
 ```sh

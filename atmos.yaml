@@ -32,6 +32,38 @@ ci:
   summary:
     enabled: true
 
+# Secret stores for the per-cluster SSH key (atmos sshkey, `secrets:` in providers/<cloud>/_defaults.yaml).
+# A secret is stored at <prefix><delimiter><stack><delimiter><NAME>; credentials come from the cloud SDK chain
+# (az login / AWS profile / ADC / VAULT_TOKEN locally, OIDC in CI).
+stores:
+  ssh-keys-azure:
+    kind: azure/keyvault
+    secret: true
+    options:
+      vault_url: https://kvatmos3a9387c7.vault.azure.net/
+      prefix: atmos
+      stack_delimiter: "-"
+  ssh-keys-aws:
+    kind: aws/asm
+    secret: true
+    options:
+      region: eu-central-1
+      prefix: atmos
+      stack_delimiter: "/"
+  ssh-keys-gcp:
+    kind: gcp/secretmanager
+    secret: true
+    options:
+      project_id: my-gcp-project
+      prefix: atmos
+      stack_delimiter: "_"
+  ssh-keys-openstack: # OpenStack has no secret manager atmos supports (Barbican): HashiCorp Vault KV v2
+    kind: hashicorp/vault
+    secret: true
+    options:
+      url: https://vault.example.com
+      mount: secret
+
 # Atmos MCP server (`atmos mcp start`) for AI agents, see agent-packages/atmos-kubemarine-ops.
 # ai.enabled is required by the server; no AI provider is configured or needed. Only the listed tools are registered:
 # read/validate/provenance plus stack value edits - no shell, no file writes, no atmos.yaml edits.
@@ -87,20 +119,37 @@ commands:
           {{- $cfg = merge (dict "nodes" $picked) ($cfg | default dict) }}
           {{- if eq $proc "add_node" }}{{ $cluster = set (deepCopy $cluster) "nodes" $rest }}{{ end }}
         {{- end }}
+        {{- $dry := eq (toString (index .Flags "dry-run")) "true" }}
+        {{- /* SSH key: CLUSTER_SSH_KEYFILE (CI) or SSH_PRIVATE_KEY from the stack's secret store -> temp file for this run */}}
+        {{- $keyfile := env "CLUSTER_SSH_KEYFILE" }}{{ $keydir := "" }}
+        {{- if not $keyfile }}
+          {{- $keydir = printf "%s/atmos-ssh-%s" (env "RUNNER_TEMP" | default (env "TEMP") | default "/tmp") uuidv4 }}
+          {{- $keyfile = printf "%s/id" $keydir }}
+        {{- end }}
+        {{- $cluster = set (deepCopy $cluster) "node_defaults" (set (deepCopy ($cluster.node_defaults | default dict)) "keyfile" $keyfile) }}
         set -e
+        {{- if and $keydir (not $dry) }}
+        mkdir -p '{{ $keydir }}'
+        chmod 700 '{{ $keydir }}' || true # Windows: no POSIX modes, the per-user TEMP is private by ACL
+        trap 'rm -rf "{{ $keydir }}"' EXIT
+        key=$(atmos secret get SSH_PRIVATE_KEY -s {{ .Flags.stack }} -c infra --mask=false --raw)
+        echo "$key" > '{{ $keyfile }}'
+        chmod 600 '{{ $keyfile }}'
+        {{- end }}
         mkdir -p .kubemarine/{{ .Flags.stack }}
         cd .kubemarine/{{ .Flags.stack }}
-        echo '{{ toJson $cluster }}' > cluster.yaml
+        # values are single-quoted for the shell: a ' inside them becomes '\''
+        echo '{{ toJson $cluster | replace "'" `'\''` }}' > cluster.yaml
         {{- if $cfg }}
-        echo '{{ toJson $cfg }}' > procedure.yaml
+        echo '{{ toJson $cfg | replace "'" `'\''` }}' > procedure.yaml
         {{- end }}
         {{- $cmd := printf "kubemarine %s %s--config cluster.yaml %s" $proc (ternary "procedure.yaml " "" (not (empty $cfg))) .TrailingArgs }}
-        {{- if eq (toString (index .Flags "dry-run")) "true" }}
+        {{- if $dry }}
         echo '--- .kubemarine/{{ .Flags.stack }}/cluster.yaml'
-        echo '{{ toPrettyJson $cluster }}'
+        echo '{{ toPrettyJson $cluster | replace "'" `'\''` }}'
         {{- if $cfg }}
         echo '--- .kubemarine/{{ .Flags.stack }}/procedure.yaml'
-        echo '{{ toPrettyJson $cfg }}'
+        echo '{{ toPrettyJson $cfg | replace "'" `'\''` }}'
         {{- end }}
         echo '--- dry run, not executed: {{ $cmd }}'
         {{- else if not (env "GITHUB_STEP_SUMMARY") }}
@@ -151,9 +200,95 @@ commands:
         {{- range $c.nodes }}{{ if and (not $cp) (has "control-plane" .roles) }}{{ $cp = .address }}{{ end }}{{ end }}
         {{- range $c.nodes }}{{ if and (not $api) (has "balancer" .roles) }}{{ $api = .address }}{{ end }}{{ end }}
         {{- $f := printf ".kubemarine/%s/kubeconfig" .Flags.stack }}
+        {{- $keyfile := env "CLUSTER_SSH_KEYFILE" }}{{ $keydir := "" }}
+        {{- if not $keyfile }}
+          {{- $keydir = printf "%s/atmos-ssh-%s" (env "RUNNER_TEMP" | default (env "TEMP") | default "/tmp") uuidv4 }}
+          {{- $keyfile = printf "%s/id" $keydir }}
+        {{- end }}
         set -e
+        {{- if $keydir }}
+        mkdir -p '{{ $keydir }}'
+        chmod 700 '{{ $keydir }}' || true # Windows: no POSIX modes, the per-user TEMP is private by ACL
+        trap 'rm -rf "{{ $keydir }}"' EXIT
+        key=$(atmos secret get SSH_PRIVATE_KEY -s {{ .Flags.stack }} -c infra --mask=false --raw)
+        echo "$key" > '{{ $keyfile }}'
+        chmod 600 '{{ $keyfile }}'
+        {{- end }}
         mkdir -p .kubemarine/{{ .Flags.stack }}
-        ssh -i {{ $c.node_defaults.keyfile }} -o StrictHostKeyChecking=accept-new -o ConnectTimeout=30 {{ $c.node_defaults.username }}@{{ required "no control-plane in infra outputs" $cp }} sudo cat /etc/kubernetes/admin.conf > {{ $f }}.tmp
+        ssh -i '{{ $keyfile }}' -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=30 {{ $c.node_defaults.username }}@{{ required "no control-plane in infra outputs" $cp }} sudo cat /etc/kubernetes/admin.conf > {{ $f }}.tmp
         mv {{ $f }}.tmp {{ $f }}
         kubectl --kubeconfig {{ $f }} config set-cluster kubernetes --server https://{{ $api | default $cp }}:6443
         echo "KUBECONFIG={{ $f }}"
+
+  # Per-cluster SSH key of the `ubuntu` user, kept in the secret store of the stack (SSH_PRIVATE_KEY / SSH_PUBLIC_KEY,
+  # declared in providers/<cloud>/_defaults.yaml). Terraform puts the public key on new VMs; kubemarine and kubeconfig
+  # read the private key into a temp file per run.
+  - name: sshkey
+    description: "Per-cluster SSH key in the stack's secret store: atmos sshkey ensure|rotate -s <stack>"
+    commands:
+      - name: ensure
+        description: "Generate and store the cluster SSH key if the stack has none; run before the first terraform apply"
+        flags:
+          - name: stack
+            shorthand: s
+            description: Cluster stack, e.g. test-azure
+            required: true
+        steps:
+          - |
+            {{- $dir := printf "%s/atmos-ssh-%s" (env "RUNNER_TEMP" | default (env "TEMP") | default "/tmp") uuidv4 }}
+            set -e
+            if atmos secret get SSH_PUBLIC_KEY -s {{ .Flags.stack }} -c infra >/dev/null 2>&1; then
+              echo "{{ .Flags.stack }}: SSH key exists"; exit 0
+            fi
+            mkdir -p '{{ $dir }}'
+            chmod 700 '{{ $dir }}' || true # Windows: no POSIX modes, the per-user TEMP is private by ACL
+            trap 'rm -rf "{{ $dir }}"' EXIT
+            ssh-keygen -q -t ed25519 -N "" -C "{{ .Flags.stack }}" -f '{{ $dir }}/id'
+            # no --force: never overwrites an existing key if the check above failed for another reason
+            atmos secret set SSH_PRIVATE_KEY --stdin -s {{ .Flags.stack }} -c infra < '{{ $dir }}/id'
+            pub=$(cat '{{ $dir }}/id.pub')
+            atmos secret set "SSH_PUBLIC_KEY=$pub" -s {{ .Flags.stack }} -c infra
+            echo "{{ .Flags.stack }}: SSH key generated and stored"
+
+      - name: rotate
+        description: "Replace the cluster SSH key on all running nodes and in the secret store (old key removed last)"
+        flags:
+          - name: stack
+            shorthand: s
+            description: Cluster stack, e.g. test-azure
+            required: true
+        component_config:
+          component: kubemarine
+          stack: "{{ .Flags.stack }}"
+        steps:
+          - |
+            {{- $c := .ComponentConfig.vars.cluster }}
+            {{- $s := .Flags.stack }}
+            {{- $dir := printf "%s/atmos-ssh-%s" (env "RUNNER_TEMP" | default (env "TEMP") | default "/tmp") uuidv4 }}
+            {{- $ssh := printf "ssh -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=30 -o BatchMode=yes -i '%s" $dir }}
+            set -e
+            mkdir -p '{{ $dir }}'
+            chmod 700 '{{ $dir }}' || true # Windows: no POSIX modes, the per-user TEMP is private by ACL
+            trap 'rm -rf "{{ $dir }}"' EXIT
+            key=$(atmos secret get SSH_PRIVATE_KEY -s {{ $s }} -c infra --mask=false --raw)
+            echo "$key" > '{{ $dir }}/old'
+            chmod 600 '{{ $dir }}/old'
+            # match keys by "<type> <base64>": the comment of an authorized_keys line may differ
+            old=$(cut -d' ' -f1,2 <<< "$(atmos secret get SSH_PUBLIC_KEY -s {{ $s }} -c infra --mask=false --raw)")
+            ssh-keygen -q -t ed25519 -N "" -C "{{ $s }}" -f '{{ $dir }}/new'
+            new=$(cat '{{ $dir }}/new.pub')
+            newid=$(cut -d' ' -f1,2 <<< "$new")
+            {{- range $c.nodes }}
+            echo "{{ .name }}: add new key"
+            {{ $ssh }}/old' {{ $c.node_defaults.username }}@{{ .address }} "grep -qF '$newid' ~/.ssh/authorized_keys || echo '$new' >> ~/.ssh/authorized_keys"
+            {{- end }}
+            {{- range $c.nodes }}
+            {{ $ssh }}/new' {{ $c.node_defaults.username }}@{{ .address }} true && echo "{{ .name }}: new key works"
+            {{- end }}
+            atmos secret set SSH_PRIVATE_KEY --stdin --force -s {{ $s }} -c infra < '{{ $dir }}/new'
+            atmos secret set "SSH_PUBLIC_KEY=$new" --force -s {{ $s }} -c infra
+            echo "secret store: new key"
+            {{- range $c.nodes }}
+            {{ $ssh }}/new' {{ $c.node_defaults.username }}@{{ .address }} "grep -vF '$old' ~/.ssh/authorized_keys > ~/.ssh/authorized_keys.new; cat ~/.ssh/authorized_keys.new > ~/.ssh/authorized_keys; rm ~/.ssh/authorized_keys.new"
+            echo "{{ .name }}: old key removed"
+            {{- end }}

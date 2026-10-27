@@ -17,12 +17,20 @@ terraform:
       encrypt: true
       use_lockfile: true
 
+# Per-cluster SSH key of the `ubuntu` user (atmos sshkey ensure|rotate): stored in the secret store per stack,
+# never in git or terraform state. kubemarine gets the private key as a temp file for the duration of a run.
+secrets:
+  vars:
+    SSH_PRIVATE_KEY: { store: ssh-keys-aws, required: true, description: "SSH private key of the cluster nodes" }
+    SSH_PUBLIC_KEY:  { store: ssh-keys-aws, required: true, description: "SSH public key put on new VMs" }
+
 components:
   terraform:
     infra:
       metadata:
         component: aws
       vars:
+        ssh_public_key: !secret SSH_PUBLIC_KEY
         region: eu-central-1
         # Size classes used by node types (catalog/node-types.yaml, clusters/*) -> VM sizes of this provider
         sizes:

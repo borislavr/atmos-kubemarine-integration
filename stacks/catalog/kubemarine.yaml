@@ -17,7 +17,7 @@ components:
           cluster_name: k8s.local
           node_defaults:
             username: ubuntu
-            keyfile: ~/.ssh/id_ed25519
+            # keyfile: set per run by `atmos kubemarine` (temp file with the stack secret SSH_PRIVATE_KEY, see atmos sshkey)
           nodes: !terraform.output infra nodes
           plugins:
             calico:

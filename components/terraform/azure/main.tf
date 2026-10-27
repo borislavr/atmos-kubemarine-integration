@@ -107,7 +107,7 @@ resource "azurerm_linux_virtual_machine" "node" {
   network_interface_ids = [azurerm_network_interface.node[each.key].id]
   admin_ssh_key {
     username   = "ubuntu"
-    public_key = file(pathexpand(var.ssh_public_key_file))
+    public_key = var.ssh_public_key
   }
   os_disk {
     name                 = "osdisk-${var.stage}-${each.key}"
@@ -120,5 +120,9 @@ resource "azurerm_linux_virtual_machine" "node" {
     offer     = "0001-com-ubuntu-server-jammy"
     sku       = "22_04-lts-gen2"
     version   = "latest"
+  }
+  # admin_ssh_key forces a new VM: a rotated key (atmos sshkey rotate) reaches running nodes in the OS; new VMs get it here
+  lifecycle {
+    ignore_changes = [admin_ssh_key]
   }
 }

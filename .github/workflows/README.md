@@ -66,9 +66,12 @@ kubeconfig в CI не хранится: `apps` получает его кома�
 
 | Секрет | Зачем | Как получить |
 |---|---|---|
-| `SSH_PRIVATE_KEY` | доступ terraform/kubemarine к нодам | **тот же ключ**, чей публичный ключ уже лежит на VM (по умолчанию `~/.ssh/id_ed25519`), без пароля: `gh secret set SSH_PRIVATE_KEY < ~/.ssh/id_ed25519`. Для отдельного CI-ключа: `ssh-keygen -t ed25519 -N "" -f ci_key` и используйте его и локально, иначе VM, созданные из CI и локально, будут с разными ключами |
 | `KAFKA_ADMIN_PASSWORD`, `KAFKA_CLIENT_PASSWORD` | пароли qubership-kafka (`ref+envsubst://...` в `stacks/catalog/kafka/defaults.yaml`); admin — также логин в AKHQ и Cruise Control | придумать: `openssl rand -base64 24 \| gh secret set KAFKA_ADMIN_PASSWORD` |
 | `GRAFANA_ADMIN_PASSWORD` | пароль `admin` в Grafana компонента `monitoring` (`stacks/catalog/monitoring.yaml`); нужен, только если ставите `monitoring` | придумать: `openssl rand -base64 24 \| gh secret set GRAFANA_ADMIN_PASSWORD` |
+
+SSH-ключ нод в секретах GitHub не нужен: у каждого кластера свой ключ в секрет-менеджере облака (README,
+«SSH-ключ кластера»). Шаг **SSH key** создаёт его для нового кластера (`deploy`/`infra`, `atmos sshkey ensure`) и один раз
+читает в `$RUNNER_TEMP` для `deploy`/`kubemarine`/`apps`. Облачной роли CI нужен доступ к этому хранилищу (ниже).
 
 Рекомендуемый способ входа в облака — **OIDC**: GitHub выдаёт workflow короткоживущий токен, облако обменивает его на
 временные креды; долгоживущих ключей в секретах нет. Доверие ограничено репозиторием и веткой
@@ -106,6 +109,9 @@ az ad app federated-credential create --id "$APP_ID" --parameters '{
 az role assignment create --assignee "$APP_ID" --role Contributor --scope "/subscriptions/$SUB"
 az role assignment create --assignee "$APP_ID" --role "Storage Blob Data Contributor" \
   --scope "$(az storage account show -n tfstate3a9387c7 -g tfstate --query id -o tsv)"
+# SSH-ключи кластеров (atmos sshkey): чтение и создание секретов в Key Vault
+az role assignment create --assignee "$APP_ID" --role "Key Vault Secrets Officer" \
+  --scope "$(az keyvault show -n kvatmos3a9387c7 --query id -o tsv)"
 
 gh secret set AZURE_CLIENT_ID --body "$APP_ID"
 gh secret set AZURE_TENANT_ID --body "$TENANT"
@@ -154,7 +160,9 @@ aws iam put-role-policy --role-name gh-atmos-kubemarine --policy-name tfstate --
   "Version": "2012-10-17",
   "Statement": [
     { "Effect": "Allow", "Action": ["s3:ListBucket"], "Resource": "arn:aws:s3:::my-tfstate-aws" },
-    { "Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"], "Resource": "arn:aws:s3:::my-tfstate-aws/*" }
+    { "Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"], "Resource": "arn:aws:s3:::my-tfstate-aws/*" },
+    { "Effect": "Allow", "Action": ["secretsmanager:CreateSecret", "secretsmanager:DescribeSecret", "secretsmanager:GetSecretValue", "secretsmanager:PutSecretValue"],
+      "Resource": "arn:aws:secretsmanager:*:*:secret:atmos/*" }
   ]
 }'
 
@@ -182,6 +190,7 @@ SA=gh-atmos-kubemarine@${PROJECT}.iam.gserviceaccount.com
 gcloud iam service-accounts create gh-atmos-kubemarine --project "$PROJECT"
 gcloud projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:$SA" --role roles/compute.admin
 gcloud storage buckets add-iam-policy-binding gs://my-tfstate-gcp --member "serviceAccount:$SA" --role roles/storage.objectAdmin
+gcloud projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:$SA" --role roles/secretmanager.admin   # SSH-ключи кластеров
 
 # Workload Identity Federation: пул + OIDC-провайдер GitHub, только этот репозиторий
 gcloud iam workload-identity-pools create github --project "$PROJECT" --location global
@@ -205,6 +214,7 @@ gh secret set GCP_SERVICE_ACCOUNT --body "$SA"
 |---|---|---|
 | `OPENSTACK_CLOUDS_YAML` | да | содержимое `clouds.yaml` с облаком, имя которого указано в `env.OS_CLOUD` стека |
 | `OPENSTACK_S3_ACCESS_KEY`, `OPENSTACK_S3_SECRET_KEY` | да | EC2-креды для state в объектном хранилище (S3 API) |
+| `VAULT_TOKEN` | да | токен HashiCorp Vault с доступом к KV, где лежат SSH-ключи кластеров (`stores.ssh-keys-openstack`) |
 
 У OpenStack нет OIDC для GitHub — используется application credential (ограниченный по проекту и времени жизни, отзывается отдельно от пароля пользователя).
 
