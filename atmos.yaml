@@ -237,17 +237,19 @@ commands:
           - |
             {{- $dir := printf "%s/atmos-ssh-%s" (env "RUNNER_TEMP" | default (env "TEMP") | default "/tmp") uuidv4 }}
             set -e
-            if atmos secret get SSH_PUBLIC_KEY -s {{ .Flags.stack }} -c infra >/dev/null 2>&1; then
+            if out=$(atmos secret get SSH_PUBLIC_KEY -s {{ .Flags.stack }} -c infra 2>&1); then
               echo "{{ .Flags.stack }}: SSH key exists"; exit 0
             fi
+            # generate only when the store says "not found"; any other error (access, network) must not lead to a new key
+            echo "$out" | grep -qiE 'not.?found' || { echo "$out"; echo "{{ .Flags.stack }}: cannot read the SSH key, not generating one"; exit 1; }
             mkdir -p '{{ $dir }}'
             chmod 700 '{{ $dir }}' || true # Windows: no POSIX modes, the per-user TEMP is private by ACL
             trap 'rm -rf "{{ $dir }}"' EXIT
             ssh-keygen -q -t ed25519 -N "" -C "{{ .Flags.stack }}" -f '{{ $dir }}/id'
-            # no --force: never overwrites an existing key if the check above failed for another reason
-            atmos secret set SSH_PRIVATE_KEY --stdin -s {{ .Flags.stack }} -c infra < '{{ $dir }}/id'
+            # --force: atmos 1.230 asks "already set, update?" even for a missing secret (and would block in CI)
+            atmos secret set SSH_PRIVATE_KEY --stdin --force -s {{ .Flags.stack }} -c infra < '{{ $dir }}/id'
             pub=$(cat '{{ $dir }}/id.pub')
-            atmos secret set "SSH_PUBLIC_KEY=$pub" -s {{ .Flags.stack }} -c infra
+            atmos secret set "SSH_PUBLIC_KEY=$pub" --force -s {{ .Flags.stack }} -c infra
             echo "{{ .Flags.stack }}: SSH key generated and stored"
 
       - name: rotate
