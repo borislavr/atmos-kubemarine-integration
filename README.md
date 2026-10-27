@@ -275,7 +275,57 @@ atmos kubemarine <procedure> -s <stack> [--nodes a,b] [-- <доп. аргуме�
 
 - `procedure.yaml` для процедуры берётся из `vars.procedures.<procedure>` стека (например, план `upgrade`).
 - `add_node` / `remove_node`: ноды из `--nodes`. Для `add_node` они исключаются из `cluster.yaml` и попадают в `procedure.yaml` (как требует kubemarine).
-- `--dry-run`: только собрать и показать `cluster.yaml`, `procedure.yaml` и команду kubemarine, не запуская её.
+- `--dry-run`: только собрать и показать `cluster.yaml`, `procedure.yaml` и команду kubemarine, не запуская её
+  (SSH-ключ при этом не читается).
+
+### Как собирается `cluster.yaml`
+
+Готового `cluster.yaml` в репозитории нет: он собирается заново при каждом `atmos kubemarine <proc> -s <stack>`
+из стека и outputs terraform. Руками его не правят — меняют стек.
+
+**1. Слои стека → `vars.cluster`.** Компонент `kubemarine` — абстрактный (`metadata.type: abstract` в
+[catalog/kubemarine.yaml](stacks/catalog/kubemarine.yaml)): terraform для него не запускается, это контейнер для
+`vars.cluster` (будущий `cluster.yaml`) и `vars.procedures` (будущие `procedure.yaml`). Значения сливаются deep merge
+по слоям, каждый следующий перекрывает предыдущий поле за полем (списки заменяются целиком):
+```
+providers/<cloud>/_defaults → catalog/kubemarine (база: node_defaults, calico vxlan, local-path)
+  → clusters/<cluster> (cluster_name, services, rbac, plugins, …) → providers/<cloud>/<cluster>
+```
+Go-шаблоны стеков atmos — в `<% %>`, поэтому `{{ ... }}` в значениях доходят до kubemarine нетронутыми: это его
+собственные jinja-шаблоны, которые он рендерит сам (например, `password: '{{ env.PASS }}'` — секрет из окружения
+без записи в `cluster.yaml`).
+
+**2. Ноды из terraform.** В базе `nodes: !terraform.output infra nodes`. Когда custom command запрашивает компонент
+(`component_config` в [atmos.yaml](atmos.yaml)), atmos выполняет `terraform init` + `terraform output` компонента
+`infra` того же стека и читает state из облачного бэкенда. Список `{name, address, internal_address, roles, labels, taints}`
+строит terraform: `outputs.tf` каждого облака из созданных VM и [modules/nodes](components/terraform/modules/nodes/main.tf)
+(тип ноды + её собственные поля). Поэтому даже `--dry-run` требует terraform, креды облака и существующий state,
+и terraform выполняется при каждом вызове (в CI — на каждой попытке «Wait for SSH»).
+
+**3. Шаблон шага custom command** (Go template над `.ComponentConfig`):
+1. `$cluster = vars.cluster`, `$cfg = vars.procedures[<procedure>]`.
+2. Для `add_node` / `remove_node`: ноды из `--nodes` ищутся в outputs (нет — ошибка), кладутся в `procedure.yaml`
+   (`nodes: [...]`); для `add_node` ещё и убираются из `cluster.yaml`.
+3. `node_defaults.keyfile` подставляется путём к временному файлу с ключом кластера
+   (см. [SSH-ключ кластера](#ssh-ключ-кластера)); в CI — `CLUSTER_SSH_KEYFILE`.
+4. Шаблон рендерится в shell-скрипт, который выполняет встроенная оболочка atmos:
+   ```sh
+   key=$(atmos secret get SSH_PRIVATE_KEY ...) ; echo "$key" > <temp>/id   # trap удаляет <temp> при выходе
+   mkdir -p .kubemarine/<stack> && cd .kubemarine/<stack>
+   echo '<toJson $cluster>' > cluster.yaml        # JSON — валидный YAML; ' внутри значений экранируется как '\''
+   echo '<toJson $cfg>'     > procedure.yaml      # только если процедура что-то задаёт
+   kubemarine <proc> [procedure.yaml] --config cluster.yaml <аргументы после -->
+   ```
+5. `--dry-run` — только печать обоих файлов и команды. В CI (`GITHUB_STEP_SUMMARY`) вывод идёт через
+   `tee kubemarine.log`, в summary — статус, длительность и последние 200 строк.
+
+**4. kubemarine** читает `cluster.yaml`, применяет свои значения по умолчанию, рендерит свои `{{ }}`-шаблоны и ходит на
+ноды по SSH (`node_defaults.username` + `keyfile`). Результаты — в `.kubemarine/<stack>/`: `cluster_finalized.yaml`,
+`dump/`, `ansible-inventory.ini`, после `install` — `kubeconfig` (admin-доступ ко всему кластеру). Сам ключ туда
+не копируется — только путь. Папка исключена из git, но из-за kubeconfig её стоит беречь.
+
+`atmos kubeconfig` берёт тот же `vars.cluster`: SSH-пользователя из `node_defaults`, адрес первого control-plane
+и первого balancer (API) из `nodes`.
 
 Примеры:
 ```sh
@@ -369,21 +419,31 @@ atmos terraform apply infra -s <stack>
 
 - `atmos sshkey ensure -s <stack>` — создать ключ, если его нет (входит в `atmos workflow deploy`, в CI — шаг перед terraform).
 - terraform получает открытый ключ через `!secret SSH_PUBLIC_KEY` и кладёт его на **новые** VM.
-- `atmos kubemarine` / `atmos kubeconfig` на время запуска читают закрытый ключ во временную папку (права 700) и удаляют её
-  при выходе; в `cluster.yaml` попадает только путь. В CI ключ читается один раз в начале job (`CLUSTER_SSH_KEYFILE`).
+- `atmos kubemarine` / `atmos kubeconfig` на время запуска читают закрытый ключ во временную папку (Linux: права 700;
+  Windows: `%TEMP%` пользователя, закрыта ACL) и удаляют её при выходе; в `cluster.yaml` попадает только путь.
+  В CI ключ читается один раз в начале job (`CLUSTER_SSH_KEYFILE`). Прерванный извне процесс (kill) папку не удалит —
+  `atmos-ssh-*` во временной папке можно удалять.
 - `atmos sshkey rotate -s <stack>` — смена ключа на работающем кластере: новый ключ дописывается на все ноды текущим,
   проверяется вход новым, хранилище переключается, старый ключ удаляется с нод. VM не пересоздаются
   (у Azure — `ignore_changes = [admin_ssh_key]`, у AWS/OpenStack — key pair по имени).
-- Зайти на ноду руками: `atmos secret get SSH_PRIVATE_KEY -s <stack> -c infra --mask=false --raw > key && chmod 600 key`
+- Зайти на ноду руками (`--raw` не добавляет перевод строки, а ssh без него ключ не читает):
+  `atmos secret get SSH_PRIVATE_KEY -s <stack> -c infra --mask=false --raw > key && echo >> key && chmod 600 key`
   (и удалить файл после).
 
-Перевод кластера, созданного со своим ключом (`~/.ssh/id_ed25519`), на эту схему: положить свой ключ в хранилище
-и сразу заменить его сгенерированным:
+Перевод кластера, созданного со своим ключом (`~/.ssh/id_ed25519`), на эту схему — личный ключ никуда не загружается
+(так переведён `test-azure`):
 ```sh
-atmos secret set SSH_PRIVATE_KEY --stdin -s <stack> -c infra < ~/.ssh/id_ed25519
-atmos secret set "SSH_PUBLIC_KEY=$(cat ~/.ssh/id_ed25519.pub)" -s <stack> -c infra
-atmos sshkey rotate -s <stack>
+atmos sshkey ensure -s <stack>                                                  # сгенерировать ключ кластера
+pub=$(atmos secret get SSH_PUBLIC_KEY -s <stack> -c infra --mask=false --raw)
+# положить его открытую часть на работающие VM — через API облака (Azure, без SSH)…
+az vm list -g rg-<cluster> --query "[].name" -o tsv | while read vm; do
+  az vm user update -g rg-<cluster> -n "$vm" -u ubuntu --ssh-key-value "$pub"; done
+# …или своим ключом по SSH (любое облако): для каждой ноды
+#   ssh ubuntu@<address> "echo '$pub' >> ~/.ssh/authorized_keys"
+atmos kubemarine do -s <stack> -- -g all --no_stream -- true                    # проверка: ключ кластера работает
 ```
+Свой ключ потом можно убрать с нод:
+`atmos kubemarine do -s <stack> -- -g all --no_stream -- "grep -vF '<тип> <base64 своего ключа>' ~/.ssh/authorized_keys > ~/.ssh/ak && cat ~/.ssh/ak > ~/.ssh/authorized_keys && rm ~/.ssh/ak"`.
 
 ### Удалить кластер
 ```sh

@@ -61,7 +61,8 @@ flowchart LR
 | | `vars.node_types` | balancer, control-plane, worker + infra-worker | catalog/node-types + clusters/full-cluster |
 | | `vars.nodes`, `vars.admin_cidr` | 8 нод; `72.56.49.160/28` | clusters/full-cluster |
 | | `ci_cidr` | IP раннера/32 или пусто | env `TF_VAR_ci_cidr` из workflow |
-| | `cidr`, `admin_ports`, `ssh_public_key_file` | `10.10.0.0/24`, `[22, 6443]`, `~/.ssh/id_ed25519.pub` | дефолты variables.tf |
+| | `cidr`, `admin_ports` | `10.10.0.0/24`, `[22, 6443]` | дефолты variables.tf |
+| | `ssh_public_key` | `!secret SSH_PUBLIC_KEY`: ключ кластера из Secrets Manager (`atmos/full-cluster-aws/SSH_PUBLIC_KEY`) | providers/aws/_defaults (секреты объявлены там же, хранилище — `stores.ssh-keys-aws` в atmos.yaml) |
 | | `backend` | s3 `my-tfstate-aws`, key `terraform.tfstate`, `workspace_key_prefix: aws` (добавляет atmos), workspace `full-cluster-aws` | providers/aws/_defaults + atmos |
 | | `env` | `AWS_PROFILE=my-profile`, `KUBECONFIG=…` (глобальный, terraform его не использует) | providers/aws/_defaults, catalog/kubemarine |
 | **kubemarine** (abstract, без папки) | `vars.cluster` | база + full-cluster: cluster_name `full-cluster.k8s.local`, services, rbac, plugins (calico mode vxlan + typha/apiserver из кластера) | catalog/kubemarine ⊕ clusters/full-cluster |
@@ -78,7 +79,7 @@ flowchart LR
 ## 2. Какие шаги workflow выполняются при каждом action
 
 Общие шаги для всех трёх action: Inputs (summary), checkout, установка terraform / atmos / helm / kubemarine / helmfile / helm-diff,
-AWS credentials, создание профиля `my-profile`, SSH-ключ. «Check inputs» вычисляет `PROVIDER=aws` (суффикс имени стека),
+AWS credentials, создание профиля `my-profile`, SSH key (`atmos sshkey ensure` для `deploy`/`infra`; для доступа к нодам ключ из Secrets Manager один раз читается в `$RUNNER_TEMP`, `CLUSTER_SSH_KEYFILE`). «Check inputs» вычисляет `PROVIDER=aws` (суффикс имени стека),
 `FIREWALL=aws_security_group.this` и `NEEDS_ACCESS`.
 
 | Шаг | infra | deploy | apps |
@@ -88,7 +89,7 @@ AWS credentials, создание профиля `my-profile`, SSH-ключ. «C
 | Open cluster firewall | — | `TF_VAR_ci_cidr=<IP раннера>/32` → `$GITHUB_ENV` | то же |
 | Apply firewall | — | — (весь apply ниже) | `atmos terraform apply infra -s full-cluster-aws -auto-approve -target=aws_security_group.this` |
 | terraform apply | `atmos terraform apply infra -s full-cluster-aws -auto-approve` | то же | — |
-| Wait for SSH on all nodes | — | до 20 раз через 15 с: `atmos kubemarine do -s full-cluster-aws -- --no_stream -- true` | то же |
+| Wait for SSH on all nodes | — | до 20 раз через 15 с: `atmos kubemarine do -s full-cluster-aws -- -g all --no_stream -- true` | то же |
 | kubemarine install | — | `atmos kubemarine install -s full-cluster-aws --dry-run=false` | — |
 | kubeconfig | — | — (пишет install) | `atmos kubeconfig -s full-cluster-aws` |
 | helmfile apply | — | для каждого `app` из input `apps` по порядку (для full-cluster: `monitoring kafka`): проверка секретов → `atmos helmfile apply <app> -s full-cluster-aws` | то же |
@@ -101,11 +102,11 @@ flowchart TB
   A["Check inputs<br/>PROVIDER=aws, NEEDS_ACCESS=false"] --> B["AWS credentials<br/>OIDC-роль или ключи"]
   B --> C["atmos describe component infra<br/>--process-functions=false"]
   C --> D["aws configure set --profile my-profile"]
-  D --> E["SSH key: ~/.ssh/id_ed25519 + .pub"]
+  D --> E["SSH key: atmos sshkey ensure<br/>ключ кластера в Secrets Manager"]
   E --> F["atmos terraform apply infra -auto-approve"]
   STK[("стек full-cluster-aws<br/>компонент infra")] -.-> C
   STK -.-> F
-  PUB["~/.ssh/id_ed25519.pub"] -.->|"aws_key_pair"| F
+  PUB[("Secrets Manager<br/>SSH_PUBLIC_KEY")] -.->|"!secret -> aws_key_pair"| F
   F --> ST[("s3://my-tfstate-aws/aws/<br/>full-cluster-aws/terraform.tfstate")]
   F --> RES["VPC, IGW, subnet, route table,<br/>SG sg-full-cluster, key pair, 8 x EC2"]
   F --> OUT["output nodes"]
@@ -118,7 +119,7 @@ flowchart TB
   A["Check inputs<br/>NEEDS_ACCESS=true"] --> B["AWS credentials, профиль, SSH key"]
   B --> C["Open firewall<br/>TF_VAR_ci_cidr=IP/32"]
   C --> D["atmos terraform apply infra -auto-approve<br/>(весь стек, SG уже с ci_cidr)"]
-  D --> E{"atmos kubemarine do<br/>-- --no_stream -- true<br/>SSH на все ноды"}
+  D --> E{"atmos kubemarine do<br/>-- -g all --no_stream -- true<br/>SSH на все ноды"}
   E -->|"нет, ждать 15 с, до 20 раз"| E
   E -->|"да"| F["atmos kubemarine install"]
   F --> M["atmos helmfile apply monitoring"]
@@ -145,7 +146,7 @@ flowchart TB
   A["Check inputs<br/>NEEDS_ACCESS=true"] --> B["AWS credentials, профиль, SSH key"]
   B --> C["Open firewall<br/>TF_VAR_ci_cidr=IP/32"]
   C --> D["Apply firewall<br/>atmos terraform apply infra -target=aws_security_group.this"]
-  D --> E{"atmos kubemarine do<br/>-- --no_stream -- true"}
+  D --> E{"atmos kubemarine do<br/>-- -g all --no_stream -- true"}
   E -->|"повтор до 20 раз"| E
   E -->|"да"| F["atmos kubeconfig"]
   F --> G["atmos helmfile apply monitoring,<br/>затем kafka"]
@@ -240,7 +241,7 @@ flowchart LR
    `kubemarine <proc> --config cluster.yaml <trailing args>`.
 5. В CI (`GITHUB_STEP_SUMMARY` задан) вывод идёт через `tee kubemarine.log`, в summary попадают статус, время и последние 200 строк.
 
-Состав cluster.yaml: `cluster_name`, `node_defaults` (ubuntu, `~/.ssh/id_ed25519`), `nodes` из output, `services`
+Состав cluster.yaml: `cluster_name`, `node_defaults` (ubuntu, `keyfile` = временный файл с `SSH_PRIVATE_KEY` на время запуска), `nodes` из output, `services`
 (kubeadm v1.34.2, resolv.conf, ntp, apparmor, haproxy, packages), `rbac` (accounts, PSS restricted), `plugins`
 (calico vxlan + apiserver, local-path-provisioner, nginx-ingress, dashboard).
 
@@ -296,7 +297,8 @@ flowchart LR
 | `catalog/kubemarine.yaml` | общий `vars.cluster`; `vars.procedures.<name>` → procedure.yaml (upgrade, backup и т. п., в этих трёх action не используется) | все кластеры |
 | `catalog/kafka/*.yaml` | профили размеров; `credentials` можно переключить на `ref+awssecrets://…` без правок helmfile; `services_values` — какие сервисы Kafka ставить | кластеры, импортирующие профиль |
 | `catalog/monitoring.yaml` | версия оператора, профиль ресурсов, любые values чарта (хранилище VictoriaMetrics, ingress Grafana, alertmanager) | кластеры, импортирующие мониторинг |
-| `components/terraform/aws/variables.tf` | дефолты `cidr`, `admin_ports`, `ssh_public_key_file`, переопределяются через `infra.vars` в стеке | VPC, SG, key pair |
+| `components/terraform/aws/variables.tf` | дефолты `cidr`, `admin_ports`, переопределяются через `infra.vars` в стеке | VPC, SG |
+| `atmos sshkey ensure` / `rotate` | ключ кластера в секрет-менеджере: создать / сменить на работающих нодах | SSH всех инструментов, key pair новых VM |
 | новое приложение | `components/helmfile/<app>/` + `catalog/<app>/` + import в кластере + input `apps: "kafka <app>"`; секреты добавить в `env:` workflow | шаг helmfile в deploy / apps |
 | `atmos.yaml` → `commands` | логика рендера cluster.yaml / procedure.yaml, формат summary, получение kubeconfig | все вызовы `atmos kubemarine` / `atmos kubeconfig` |
 | input `kubemarine` (action=kubemarine) | хвост `-- <args>` передаётся kubemarine как есть, например `install -- --tasks deploy.plugins` | вне трёх рассмотренных action |

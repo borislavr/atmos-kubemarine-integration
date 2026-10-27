@@ -51,6 +51,10 @@ Components:
   `vars.procedures.<name>` = procedure.yaml. Rendered and run by the custom command `atmos kubemarine <proc> -s <stack>`.
 - helmfile apps (`components/helmfile/<app>`): `vars` become helmfile state values; secrets resolved by vals
   (`fetchSecretValue`); `env.KUBECONFIG` points at `.kubemarine/<stack>/kubeconfig`.
+- SSH key (if the repo has `atmos sshkey`): one key per stack in the cloud secret store (`SSH_PRIVATE_KEY` /
+  `SSH_PUBLIC_KEY`, `atmos secret`); custom commands read it into a temp file per run. Never write it to `~/.ssh`, the
+  repo or the chat; `atmos sshkey ensure` before a new cluster's first terraform apply, `atmos sshkey rotate` to replace it.
+- `kubemarine do` runs on control-plane nodes only unless given `-g all` (or `-g`/`-n` selectors).
 
 ## Tools
 
